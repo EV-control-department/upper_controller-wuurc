@@ -777,13 +777,13 @@ class CombinedMotorTestPanel(QWidget):
         self.y_value = 0.0
         self.z_value = 0.0
 
-        values_layout.addWidget(QLabel("X:"), 0, 0)
-        values_layout.addWidget(QLabel("Y:"), 1, 0)
-        values_layout.addWidget(QLabel("Z:"), 2, 0)
+        values_layout.addWidget(QLabel("X (实际值):"), 0, 0)
+        values_layout.addWidget(QLabel("Y (实际值):"), 1, 0)
+        values_layout.addWidget(QLabel("Z (实际值):"), 2, 0)
 
-        self.x_value_label = QLabel("0.00")
-        self.y_value_label = QLabel("0.00")
-        self.z_value_label = QLabel("0.00")
+        self.x_value_label = QLabel("0.0")
+        self.y_value_label = QLabel("0.0")
+        self.z_value_label = QLabel("0.0")
 
         values_layout.addWidget(self.x_value_label, 0, 1)
         values_layout.addWidget(self.y_value_label, 1, 1)
@@ -799,19 +799,28 @@ class CombinedMotorTestPanel(QWidget):
         # 转换为-1.0到1.0范围
         normalized_value = value / 100.0
 
+        # 计算实际下发的缩放值
+        scaled_value = 0.0
+        if axis == "x":
+            scaled_value = 3000 * controller_curve(normalized_value)
+        elif axis == "y":
+            scaled_value = 5000 * controller_curve(normalized_value)
+        elif axis == "z":
+            scaled_value = 6000 * controller_curve(normalized_value)
+
         # 更新标签
         if axis == "x":
             self.x_value = normalized_value
             self.x_label.setText(f"{normalized_value:.2f}")
-            self.x_value_label.setText(f"{normalized_value:.2f}")
+            self.x_value_label.setText(f"{scaled_value:.1f}")
         elif axis == "y":
             self.y_value = normalized_value
             self.y_label.setText(f"{normalized_value:.2f}")
-            self.y_value_label.setText(f"{normalized_value:.2f}")
+            self.y_value_label.setText(f"{scaled_value:.1f}")
         elif axis == "z":
             self.z_value = normalized_value
             self.z_label.setText(f"{normalized_value:.2f}")
-            self.z_value_label.setText(f"{normalized_value:.2f}")
+            self.z_value_label.setText(f"{scaled_value:.1f}")
 
     def start_test(self):
         """开始组合测试"""
@@ -1218,6 +1227,9 @@ class ThrustCurveDebugger(QMainWindow):
         self.setWindowTitle("ROV推力曲线调试工具")
         self.setMinimumSize(1000, 700)
 
+        # 初始化配置管理器
+        self.config_manager = ConfigManager()
+
         # 加载曲线数据
         self.curve_data = {}
         self.config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config",
@@ -1431,20 +1443,18 @@ class ThrustCurveDebugger(QMainWindow):
             # 创建UDP套接字
             self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
-            # 尝试从配置文件加载远程地址和端口
-            config_manager = ConfigManager()
-
+            # 使用类级别的配置管理器
             # 获取本地端口并绑定
-            local_port = config_manager.get_local_port()
+            local_port = self.config_manager.get_local_port()
             self.udp_socket.setblocking(False)  # 设置为非阻塞模式
             self.udp_socket.bind(('', local_port))  # 绑定本地端口
 
             # 获取远程地址和端口
-            if "network" in config_manager.config:
-                self.remote_addr = config_manager.config["network"].get("remote_ip", "127.0.0.1")
-                self.remote_port = config_manager.config["network"].getint("remote_port", 8888)
+            if "network" in self.config_manager.config:
+                self.remote_addr = self.config_manager.config["network"].get("remote_ip", "127.0.0.1")
+                self.remote_port = self.config_manager.config["network"].getint("remote_port", 8888)
             else:
-                server_address = config_manager.get_server_address()
+                server_address = self.config_manager.get_server_address()
                 self.remote_addr = server_address[0]
                 self.remote_port = server_address[1]
 
@@ -1464,18 +1474,43 @@ class ThrustCurveDebugger(QMainWindow):
             # 提取电机编号
             motor_num = int(motor_id[1:])
 
-            # 创建命令数据
+            # 应用控制器曲线函数
+            curved_speed = controller_curve(speed)
+
+            # 根据电机类型应用正确的幅度
+            # 根据config_beyond.ini中的设置: x=3000, y=5000, z=6000
+            scaled_speed = curved_speed
+            if motor_num in [0, 1]:  # 左右水平推进器 (X轴)
+                scaled_speed = 3000 * curved_speed
+            elif motor_num in [2, 3]:  # 前后水平推进器 (Y轴)
+                scaled_speed = 5000 * curved_speed
+            elif motor_num in [4, 5]:  # 上下垂直推进器 (Z轴)
+                scaled_speed = 6000 * curved_speed
+
+            # 创建与main.py相同格式的命令数据
+            # 根据电机类型设置对应的轴
             command = {
-                "type": "motor_test",
-                "motor": motor_num,
-                "speed": speed
+                "x": 0.0, "y": 0.0, "z": 0.0, "yaw": 0.0,
+                "servo0": self.config_manager.config["servo"].getfloat("open"),
             }
 
+            if motor_num in [0, 1]:  # 左右水平推进器 (X轴)
+                command["x"] = speed  # 使用原始输入值，不是scaled_speed
+            elif motor_num in [2, 3]:  # 前后水平推进器 (Y轴)
+                command["y"] = speed  # 使用原始输入值，不是scaled_speed
+            elif motor_num in [4, 5]:  # 上下垂直推进器 (Z轴)
+                command["z"] = speed  # 使用原始输入值，不是scaled_speed
+            
             # 转换为JSON字符串
             command_json = json.dumps(command)
 
             # 发送数据 (添加换行符，与main.py中的发送方式保持一致)
             self.udp_socket.sendto((command_json + '\n').encode('utf-8'), (self.remote_addr, self.remote_port))
+
+            # 记录日志
+            self.debug_info_panel.add_log(
+                f"发送电机命令: 原始值={speed:.2f}, 曲线后={curved_speed:.2f}, 缩放后={scaled_speed:.2f}")
+            self.debug_info_panel.add_log(f"使用main.py格式发送: {command}")
 
             return True
         except Exception as e:
@@ -1493,47 +1528,24 @@ class ThrustCurveDebugger(QMainWindow):
             return False
 
         try:
-            # 从x, y, z值计算各个电机的速度
+            # 从x, y, z值获取原始速度
             x_raw = motor_speeds.get("x", 0.0)
             y_raw = motor_speeds.get("y", 0.0)
             z_raw = motor_speeds.get("z", 0.0)
 
-            # 应用控制器曲线函数和正确的幅度
+            # 应用控制器曲线函数和正确的幅度（仅用于日志显示）
             # 根据config_beyond.ini中的设置: x=3000, y=5000, z=6000
-            x = 3000 * controller_curve(x_raw)
-            y = 5000 * controller_curve(y_raw)
-            z = 6000 * controller_curve(z_raw)
+            x_scaled = 3000 * controller_curve(x_raw)
+            y_scaled = 5000 * controller_curve(y_raw)
+            z_scaled = 6000 * controller_curve(z_raw)
 
-            # 根据ROV的电机布局计算各个电机的速度
-            # 这里使用一个简化的映射，实际应用中可能需要更复杂的计算
-            # 假设:
-            # m0, m1: 左右水平推进器
-            # m2, m3: 前后水平推进器
-            # m4, m5: 上下垂直推进器
-
-            # 水平推进器 (左右)
-            m0_speed = x  # 左侧推进器
-            m1_speed = -x  # 右侧推进器 (反向)
-
-            # 水平推进器 (前后)
-            m2_speed = y  # 前侧推进器
-            m3_speed = -y  # 后侧推进器 (反向)
-
-            # 垂直推进器 (上下)
-            m4_speed = z  # 垂直推进器1
-            m5_speed = z  # 垂直推进器2
-
-            # 创建命令数据
+            # 创建与main.py相同格式的命令数据
             command = {
-                "type": "combined_test",
-                "motors": {
-                    "0": m0_speed,
-                    "1": m1_speed,
-                    "2": m2_speed,
-                    "3": m3_speed,
-                    "4": m4_speed,
-                    "5": m5_speed
-                }
+                "x": x_scaled,
+                "y": y_scaled,
+                "z": z_scaled,
+                "yaw": 0.0,
+                "servo0": self.config_manager.config["servo"].getfloat("open")
             }
 
             # 转换为JSON字符串
@@ -1544,9 +1556,8 @@ class ThrustCurveDebugger(QMainWindow):
 
             # 记录日志
             self.debug_info_panel.add_log(f"发送组合命令: 原始值 X={x_raw:.2f}, Y={y_raw:.2f}, Z={z_raw:.2f}")
-            self.debug_info_panel.add_log(f"处理后值: X={x:.2f}, Y={y:.2f}, Z={z:.2f}")
-            self.debug_info_panel.add_log(
-                f"电机速度: M0={m0_speed:.2f}, M1={m1_speed:.2f}, M2={m2_speed:.2f}, M3={m3_speed:.2f}, M4={m4_speed:.2f}, M5={m5_speed:.2f}")
+            self.debug_info_panel.add_log(f"处理后值(仅供参考): X={x_scaled:.2f}, Y={y_scaled:.2f}, Z={z_scaled:.2f}")
+            self.debug_info_panel.add_log(f"使用main.py格式发送: {command}")
 
             return True
         except Exception as e:
