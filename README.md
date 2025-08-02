@@ -6,7 +6,7 @@
 
 ## 发布信息
 
-**最新版本**: V2.0.0 (2025-08-01)
+**最新版本**: V2.0.0 (2025-08-02)
 
 此版本进行了全面的模块化重构，将阻塞操作改为非阻塞模式，显著提高了系统响应性和稳定性。详细发布说明请参阅 [发布说明文档](docs/RELEASE_NOTES.md)。
 
@@ -23,8 +23,8 @@
 
 1. **克隆或下载项目**：
    ```
-   git clone https://github.com/your-username/upper_controller-wuurc.git
-   cd upper_controller-wuurc_V1.0
+   git clone git@github.com:exp-049/upper_controller-wuurc.git
+   cd upper_controller-wuurc
    ```
 
 2. **安装FFmpeg**：
@@ -277,14 +277,3 @@ upper_controller-wuurc_V2.0/
 张殷瑞&人机交互中国水版本
 
 ![img](https://img1.baidu.com/it/u=4019763367,1639339942&fm=253&fmt=auto&app=138&f=JPEG?w=541&h=500)
-
-```
-__||_____||__
-__||_____||__
-___\\___//___
-_===========_
-_____|||_____
-_____|||_____
-______|______
-___防伪专用___
-```
