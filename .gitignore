@@ -1,0 +1,57 @@
+# Python bytecode files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+dist/
+build/
+build_info/
+*.egg-info/
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs and databases
+*.log
+logs/
+*.sqlite3
+*.db
+
+# Build artifacts
+ROV_Controller_V*.zip
+*.spec
+release/
+
+# Compiled files
+*.so
+*.dll
+*.exe
+
+# Captures and media
+captures/
+assets/capture*.jpg
+
+# Local configuration
+config_local.ini
+
+# Temporary files
+*.tmp
+*.bak
+.DS_Store
+
+# Author information
+# Zhang Yinrui zhangyinrui00@google.com
+/.junie/
+
+
+

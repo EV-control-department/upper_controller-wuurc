@@ -1,0 +1,40 @@
+# 配置结构改进计划
+
+## 需要添加到配置文件的参数
+
+### 1. 模式设置 (mode_defaults)
+- speed_mode_ptr = 2  // 初始速度模式指针
+- lock_mode_ptr = 2   // 初始锁定模式指针
+- loop_mode_ptr = 0   // 初始闭环模式指针
+- catch_mode_ptr = 0  // 初始抓取模式指针
+
+### 2. 控制器时间设置 (controller_timing)
+- button10_block_duration = 3    // 按钮10阻塞持续时间(秒)
+- depth_temp_block_duration = 0.2 // 深度温度阻塞持续时间(秒)
+
+### 3. 控制器阈值设置 (controller_thresholds)
+- left_trigger_threshold = -0.5  // 左扳机阈值(用于速度模式切换)
+- right_trigger_threshold = 0.9  // 右扳机阈值(用于释放状态)
+- hat_up_value = 1              // 方向键上值
+
+## 配置文件结构示例
+
+```ini
+[mode_defaults]
+; 初始模式指针
+speed_mode_ptr = 2
+lock_mode_ptr = 2
+loop_mode_ptr = 0
+catch_mode_ptr = 0
+
+[controller_timing]
+; 阻塞持续时间(秒)
+button10_block_duration = 3
+depth_temp_block_duration = 0.2
+
+[controller_thresholds]
+; 特殊功能的轴阈值
+left_trigger_threshold = -0.5
+right_trigger_threshold = 0.9
+hat_up_value = 1
+```
