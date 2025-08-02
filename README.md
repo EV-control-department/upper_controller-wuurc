@@ -23,8 +23,8 @@
 
 1. **克隆或下载项目**：
    ```
-   git clone https://github.com/your-username/upper_controller-wuurc.git
-   cd upper_controller-wuurc_V1.0
+   git clone git@github.com:exp-049/upper_controller-wuurc.git
+   cd upper_controller-wuurc
    ```
 
 2. **安装FFmpeg**：
