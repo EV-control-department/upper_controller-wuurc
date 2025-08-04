@@ -42,7 +42,7 @@ class CurveVisualizerWidget(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumSize(400, 300)
+        self.setMinimumSize(500, 340)
 
         # 曲线数据
         self.curve_data = {}
@@ -50,157 +50,212 @@ class CurveVisualizerWidget(QWidget):
         self.show_original_curve = True
         self.show_modified_curve = True
 
-        # 创建原始曲线数据的副本用于比较
+        # 原始数据副本
         self.original_curve_data = {}
 
-        # 控制器曲线函数的输入输出数据
-        self.controller_inputs = np.linspace(-1, 1, 100)
-        self.controller_outputs = np.array([controller_curve(x) for x in self.controller_inputs])
+        # 移除控制器曲线
 
-        # 拖拽相关变量
+        # 拖拽相关
         self.dragging = False
         self.drag_point = None
         self.drag_point_type = None
 
+        # —— 绝对值量程（推力模式）——
+        self.y_min = -1.0
+        self.y_max = 1.0
+        self.lock_output_range = False
+
+        # —— PWM 模式量程（绝对）——
+        self.pwm_y_min = 1000.0
+        self.pwm_y_max = 2000.0
+        self.pwm_center = (self.pwm_y_min + self.pwm_y_max) / 2.0
+
+        # 模式：'thrust' 或 'pwm'
+        self.mode = 'thrust'
+
+        # 可选：为每个电机保存 PWM 值（与推力值独立调）
+        self.pwm_data = {}  # { motor_id: {pwm_nt_end, pwm_nt_mid, pwm_pt_mid, pwm_pt_end} }
+
         # 设置背景色
         self.setAutoFillBackground(True)
-        palette = self.palette()
-        palette.setColor(self.backgroundRole(), QColor(240, 240, 240))
-        self.setPalette(palette)
+        pal = self.palette()
+        pal.setColor(self.backgroundRole(), QColor(240, 240, 240))
+        self.setPalette(pal)
 
         # 启用鼠标跟踪
         self.setMouseTracking(True)
+
+        # —— 模式切换按钮（拖拽方向转换）——
+        from PyQt5.QtWidgets import QPushButton
+        self.toggle_btn = QPushButton("模式: 上下拖拽调节PWM", self)
+        self.toggle_btn.setCheckable(True)
+        self.toggle_btn.setGeometry(10, 10, 180, 28)
+        self.toggle_btn.toggled.connect(self.on_toggle_mode)
+
+    # 对外接口：固定推力量程
+    def set_output_range(self, y_min, y_max):
+        self.y_min = float(y_min)
+        self.y_max = float(y_max) if y_max != y_min else (float(y_min) + 1.0)
+        self.lock_output_range = True
+        self.update()
+
+    # 对外接口：设置 PWM 量程
+    def set_pwm_range(self, y_min, y_max):
+        self.pwm_y_min = float(y_min)
+        self.pwm_y_max = float(y_max) if y_max != y_min else (float(y_min) + 1.0)
+        self.pwm_center = (self.pwm_y_min + self.pwm_y_max) / 2.0
+        self.update()
+
+    def on_toggle_mode(self, checked):
+        self.mode = 'pwm' if checked else 'thrust'
+        self.toggle_btn.setText("模式: 左右拖拽调节推力" if checked else "模式: 上下拖拽调节PWM")
+        self.update()
 
     def set_curve_data(self, curve_data, motor_id="m0"):
         """设置曲线数据"""
         self.curve_data = curve_data
         self.selected_motor = motor_id
 
-        # 创建原始数据的深拷贝
+        # 原始数据深拷贝
         self.original_curve_data = json.loads(json.dumps(curve_data))
+
+        # 自动估计推力量程（除非外部锁定）
+        if not self.lock_output_range:
+            vals = [0.0]
+            for m in curve_data.values():
+                vals.extend([
+                    m.get("nt_end", 0.0),
+                    m.get("nt_mid", 0.0),
+                    m.get("pt_mid", 0.0),
+                    m.get("pt_end", 0.0),
+                ])
+            y_min = min(vals)
+            y_max = max(vals)
+            if y_min == y_max:
+                y_min, y_max = y_min - 1.0, y_max + 1.0
+            pad = 0.05 * (y_max - y_min)
+            self.y_min = y_min - pad
+            self.y_max = y_max + pad
+
+        # 同步/初始化 PWM 数据（若不存在则线性映射一次）
+        for mid, m in curve_data.items():
+            if mid not in self.pwm_data:
+                self.pwm_data[mid] = self._thrust_dict_to_pwm_dict(m)
 
         self.update()
 
+    # 将一个电机的推力四点线性映射到 PWM 区间（一次性初始化用）
+    def _thrust_to_pwm(self, y_abs):
+        # 把 [self.y_min, self.y_max] 线性映射到 [pwm_y_min, pwm_y_max]
+        rng = (self.y_max - self.y_min) or 1.0
+        t = (y_abs - self.y_min) / rng
+        return self.pwm_y_min + t * (self.pwm_y_max - self.pwm_y_min)
+
+    def _thrust_dict_to_pwm_dict(self, m):
+        return {
+            "pwm_nt_end": self._thrust_to_pwm(m.get("nt_end", 0.0)),
+            "pwm_nt_mid": self._thrust_to_pwm(m.get("nt_mid", 0.0)),
+            "pwm_pt_mid": self._thrust_to_pwm(m.get("pt_mid", 0.0)),
+            "pwm_pt_end": self._thrust_to_pwm(m.get("pt_end", 0.0)),
+        }
+
     def update_motor_selection(self, motor_id):
-        """更新选中的电机"""
         self.selected_motor = motor_id
         self.update()
 
     def toggle_original_curve(self, show):
-        """切换显示原始曲线"""
         self.show_original_curve = show
         self.update()
 
     def toggle_modified_curve(self, show):
-        """切换显示修改后的曲线"""
         self.show_modified_curve = show
         self.update()
 
     def paintEvent(self, event):
-        """绘制曲线"""
         if not self.curve_data or self.selected_motor not in self.curve_data:
             return
 
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
-        # 设置字体
         font = QFont()
         font.setPointSize(10)
         painter.setFont(font)
 
-        # 绘制坐标系
         self.draw_coordinate_system(painter)
 
-        # 绘制控制器曲线
-        self.draw_controller_curve(painter)
-
-        # 绘制原始曲线
         if self.show_original_curve and self.original_curve_data and self.selected_motor in self.original_curve_data:
-            self.draw_motor_curve(painter, self.original_curve_data[self.selected_motor], QColor(100, 100, 255, 180), 2)
+            self.draw_motor_curve(painter, self.original_curve_data[self.selected_motor],
+                                  QColor(100, 100, 255, 180), 2, is_original=True)
 
-        # 绘制修改后的曲线
         if self.show_modified_curve:
-            self.draw_motor_curve(painter, self.curve_data[self.selected_motor], QColor(255, 100, 100), 2)
+            self.draw_motor_curve(painter, self.curve_data[self.selected_motor],
+                                  QColor(255, 100, 100), 2, is_original=False)
 
-        # 绘制图例
         self.draw_legend(painter)
 
     def draw_coordinate_system(self, painter):
-        """绘制坐标系"""
+        """坐标系：X=推力/输出(绝对)，Y=PWM(µs)"""
         width = self.width()
         height = self.height()
         margin = 50
 
         # 坐标轴
         painter.setPen(QPen(QColor(0, 0, 0), 2))
+        painter.drawLine(margin, height - margin, width - margin, height - margin)  # X
+        painter.drawLine(margin, height - margin, margin, margin)  # Y
 
-        # X轴
-        painter.drawLine(margin, height - margin, width - margin, height - margin)
-
-        # Y轴
-        painter.drawLine(margin, height - margin, margin, margin)
-
-        # X轴刻度
+        # X轴刻度（始终使用推力值）
         painter.setPen(QPen(QColor(0, 0, 0), 1))
-        x_ticks = [-1.0, -0.5, 0.0, 0.5, 1.0]
+        x_ticks = np.linspace(self.y_min, self.y_max, 5)
+            
         for tick in x_ticks:
-            x = margin + (tick + 1) / 2 * (width - 2 * margin)
+            x = margin + (tick - x_ticks[0]) / (x_ticks[-1] - x_ticks[0]) * (width - 2 * margin)
             painter.drawLine(int(x), height - margin, int(x), height - margin + 5)
-            painter.drawText(int(x) - 15, height - margin + 20, f"{tick:.1f}")
+            painter.drawText(int(x) - 25, height - margin + 20, f"{tick:.2f}")
 
-        # Y轴刻度
-        y_ticks = [-1.0, -0.5, 0.0, 0.5, 1.0]
+        # Y轴刻度（始终使用PWM值）
+        painter.setPen(QPen(QColor(0, 0, 0), 1))
+        y_ticks = np.linspace(self.pwm_y_min, self.pwm_y_max, 5)
+
         for tick in y_ticks:
-            y = height - margin - (tick + 1) / 2 * (height - 2 * margin)
+            y = height - margin - (tick - self.pwm_y_min) / (self.pwm_y_max - self.pwm_y_min) * (height - 2 * margin)
             painter.drawLine(margin - 5, int(y), margin, int(y))
-            painter.drawText(margin - 40, int(y) + 5, f"{tick:.1f}")
+            painter.drawText(margin - 70, int(y) + 5, f"{tick:.2f}")
 
-        # 坐标轴标签
-        painter.drawText(width // 2, height - 10, "输入值")
+        # 轴标签
+        painter.drawText(width // 2, height - 10, "推力/输出(绝对)")
         painter.save()
         painter.translate(10, height // 2)
         painter.rotate(-90)
-        painter.drawText(0, 0, "输出值")
+        painter.drawText(0, 0, "PWM(µs)")
         painter.restore()
 
-        # 绘制网格
+        # 网格
         painter.setPen(QPen(QColor(200, 200, 200), 1, Qt.DashLine))
         for tick in x_ticks:
-            x = margin + (tick + 1) / 2 * (width - 2 * margin)
+            x = margin + (tick - x_ticks[0]) / (x_ticks[-1] - x_ticks[0]) * (width - 2 * margin)
             painter.drawLine(int(x), margin, int(x), height - margin)
 
         for tick in y_ticks:
-            y = height - margin - (tick + 1) / 2 * (height - 2 * margin)
+            y = height - margin - (tick - self.pwm_y_min) / (self.pwm_y_max - self.pwm_y_min) * (height - 2 * margin)
             painter.drawLine(margin, int(y), width - margin, int(y))
 
-    def draw_controller_curve(self, painter):
-        """绘制控制器曲线"""
-        width = self.width()
-        height = self.height()
-        margin = 50
+    # 绝对值 -> 像素Y (PWM值)
+    def _map_y_abs(self, y_abs, height, margin):
+        y0, y1 = self.pwm_y_min, self.pwm_y_max
+        rng = (y1 - y0) or 1.0
+        return height - margin - ((y_abs - y0) / rng) * (height - 2 * margin)
 
-        # 绘制控制器曲线
-        painter.setPen(QPen(QColor(0, 150, 0, 180), 2))
+    # 绝对值 -> 像素X (推力/输出值)
+    def _map_x_abs(self, x_abs, width, margin):
+        # 始终使用推力值范围作为X轴
+        x0, x1 = self.y_min, self.y_max
+        rng = (x1 - x0) or 1.0
+        return margin + ((x_abs - x0) / rng) * (width - 2 * margin)
 
-        path = QPainterPath()
-        first_point = True
-
-        for i, (input_val, output_val) in enumerate(zip(self.controller_inputs, self.controller_outputs)):
-            # 将[-1,1]范围映射到绘图区域
-            x = margin + (input_val + 1) / 2 * (width - 2 * margin)
-            y = height - margin - (output_val + 1) / 2 * (height - 2 * margin)
-
-            if first_point:
-                path.moveTo(x, y)
-                first_point = False
-            else:
-                path.lineTo(x, y)
-
-        painter.drawPath(path)
-
-    def draw_motor_curve(self, painter, motor_data, color, width=2):
-        """绘制电机曲线"""
+    def draw_motor_curve(self, painter, motor_data, color, width=2, is_original=False):
+        """线性折线，使用绝对值（推力或PWM）"""
         if not motor_data:
             return
 
@@ -208,121 +263,88 @@ class CurveVisualizerWidget(QWidget):
         h = self.height()
         margin = 50
 
-        # 提取曲线参数
-        np_mid = motor_data.get("np_mid", 0)
-        np_ini = motor_data.get("np_ini", 0)
-        pp_ini = motor_data.get("pp_ini", 0)
-        pp_mid = motor_data.get("pp_mid", 0)
-        nt_end = motor_data.get("nt_end", 0)
-        nt_mid = motor_data.get("nt_mid", 0)
-        pt_mid = motor_data.get("pt_mid", 0)
-        pt_end = motor_data.get("pt_end", 0)
+        # 获取推力值（X轴）
+        nt_end = motor_data.get("nt_end", 0.0)
+        nt_mid = motor_data.get("nt_mid", 0.0)
+        pt_mid = motor_data.get("pt_mid", 0.0)
+        pt_end = motor_data.get("pt_end", 0.0)
 
-        # 计算中点值
-        mid_point = (np_mid + pp_mid) / 2
+        # 输入值（相对）转为绝对推力值（X轴）
+        x_vals = [nt_end, nt_mid, 0.0, pt_mid, pt_end]
 
-        # 归一化参数到[-1,1]范围
-        # 位置参数归一化
-        pos_range = max(abs(np_mid - mid_point), abs(pp_mid - mid_point)) * 2
-        if pos_range == 0:
-            pos_range = 1  # 防止除以零
+        # 获取对应的PWM值（Y轴）
+        pwm_m = self.pwm_data.get(self.selected_motor, {})
+        if is_original and self.selected_motor in self.original_curve_data:
+            # 原始曲线对应的 PWM 显示：用原始推力值经一次性映射（不保存）
+            src = self._thrust_dict_to_pwm_dict(self.original_curve_data[self.selected_motor])
+            y_vals = [
+                src["pwm_nt_end"],
+                src["pwm_nt_mid"],
+                self.pwm_center,
+                src["pwm_pt_mid"],
+                src["pwm_pt_end"]
+            ]
+        else:
+            y_vals = [
+                pwm_m.get("pwm_nt_end", self.pwm_center),
+                pwm_m.get("pwm_nt_mid", self.pwm_center),
+                self.pwm_center,
+                pwm_m.get("pwm_pt_mid", self.pwm_center),
+                pwm_m.get("pwm_pt_end", self.pwm_center)
+            ]
 
-        norm_np_mid = (np_mid - mid_point) / pos_range
-        norm_np_ini = (np_ini - mid_point) / pos_range
-        norm_pp_ini = (pp_ini - mid_point) / pos_range
-        norm_pp_mid = (pp_mid - mid_point) / pos_range
+        # 到画布
+        points = []
+        for x_abs, y_abs in zip(x_vals, y_vals):
+            x = self._map_x_abs(x_abs, w, margin)
+            y = self._map_y_abs(y_abs, h, margin)
+            points.append((x, y))
 
-        # 推力参数归一化
-        thrust_range = max(abs(nt_end), abs(pt_end)) * 2
-        if thrust_range == 0:
-            thrust_range = 1  # 防止除以零
+        x1, y1 = points[0]
+        x2, y2 = points[1]
+        x3, y3 = points[2]
+        x4, y4 = points[3]
+        x5, y5 = points[4]
 
-        norm_nt_end = nt_end / thrust_range
-        norm_nt_mid = nt_mid / thrust_range
-        norm_pt_mid = pt_mid / thrust_range
-        norm_pt_end = pt_end / thrust_range
-
-        # 绘制曲线
+        # 折线（仅描边）
+        painter.save()
         painter.setPen(QPen(color, width))
-
-        # 创建路径
+        painter.setBrush(Qt.NoBrush)
         path = QPainterPath()
-
-        # 负向部分
-        x1 = margin + ((-1) + 1) / 2 * (w - 2 * margin)  # 输入 -1
-        y1 = h - margin - ((norm_nt_end) + 1) / 2 * (h - 2 * margin)  # 输出 norm_nt_end
-
-        x2 = margin + ((-0.5) + 1) / 2 * (w - 2 * margin)  # 输入 -0.5
-        y2 = h - margin - ((norm_nt_mid) + 1) / 2 * (h - 2 * margin)  # 输出 norm_nt_mid
-
-        # 中点
-        x3 = margin + ((0) + 1) / 2 * (w - 2 * margin)  # 输入 0
-        y3 = h - margin - ((0) + 1) / 2 * (h - 2 * margin)  # 输出 0
-
-        # 正向部分
-        x4 = margin + ((0.5) + 1) / 2 * (w - 2 * margin)  # 输入 0.5
-        y4 = h - margin - ((norm_pt_mid) + 1) / 2 * (h - 2 * margin)  # 输出 norm_pt_mid
-
-        x5 = margin + ((1) + 1) / 2 * (w - 2 * margin)  # 输入 1
-        y5 = h - margin - ((norm_pt_end) + 1) / 2 * (h - 2 * margin)  # 输出 norm_pt_end
-
-        # 绘制曲线
-        path.moveTo(x1, y1)
-        path.cubicTo(x2, y2, x2, y2, x3, y3)
-        path.cubicTo(x4, y4, x4, y4, x5, y5)
-
+        path.moveTo(x1, y1);
+        path.lineTo(x2, y2);
+        path.lineTo(x3, y3);
+        path.lineTo(x4, y4);
+        path.lineTo(x5, y5)
         painter.drawPath(path)
+        painter.restore()
 
-        # 绘制控制点
+        # 控制点
         point_radius = 4
-        if self.show_modified_curve and motor_data == self.curve_data.get(self.selected_motor, {}):
-            # 如果是当前选中的电机的修改后曲线，绘制可拖拽的控制点
-            # 负向终点 (nt_end)
+        if self.show_modified_curve and not is_original and motor_data == self.curve_data.get(self.selected_motor, {}):
             painter.setBrush(QBrush(color))
             painter.drawEllipse(int(x1) - point_radius, int(y1) - point_radius, point_radius * 2, point_radius * 2)
-
-            # 负向中点 (nt_mid)
-            painter.setBrush(QBrush(color))
             painter.drawEllipse(int(x2) - point_radius, int(y2) - point_radius, point_radius * 2, point_radius * 2)
-
-            # 中点 (固定点)
-            painter.setBrush(QBrush(QColor(100, 100, 100)))
+            painter.setBrush(QBrush(QColor(100, 100, 100)))  # 中心点（不可拖）
             painter.drawEllipse(int(x3) - point_radius, int(y3) - point_radius, point_radius * 2, point_radius * 2)
-
-            # 正向中点 (pt_mid)
             painter.setBrush(QBrush(color))
             painter.drawEllipse(int(x4) - point_radius, int(y4) - point_radius, point_radius * 2, point_radius * 2)
-
-            # 正向终点 (pt_end)
-            painter.setBrush(QBrush(color))
             painter.drawEllipse(int(x5) - point_radius, int(y5) - point_radius, point_radius * 2, point_radius * 2)
 
-            # 如果正在拖拽，绘制高亮的控制点
             if self.dragging and self.drag_point is not None:
                 painter.setBrush(QBrush(QColor(255, 255, 0)))
-                if self.drag_point_type == "nt_end":
-                    painter.drawEllipse(int(x1) - point_radius - 2, int(y1) - point_radius - 2, (point_radius + 2) * 2,
-                                        (point_radius + 2) * 2)
-                elif self.drag_point_type == "nt_mid":
-                    painter.drawEllipse(int(x2) - point_radius - 2, int(y2) - point_radius - 2, (point_radius + 2) * 2,
-                                        (point_radius + 2) * 2)
-                elif self.drag_point_type == "pt_mid":
-                    painter.drawEllipse(int(x4) - point_radius - 2, int(y4) - point_radius - 2, (point_radius + 2) * 2,
-                                        (point_radius + 2) * 2)
-                elif self.drag_point_type == "pt_end":
-                    painter.drawEllipse(int(x5) - point_radius - 2, int(y5) - point_radius - 2, (point_radius + 2) * 2,
+                hl = {"nt_end": (x1, y1), "nt_mid": (x2, y2), "pt_mid": (x4, y4), "pt_end": (x5, y5)}
+                if self.drag_point_type in hl:
+                    xx, yy = hl[self.drag_point_type]
+                    painter.drawEllipse(int(xx) - point_radius - 2, int(yy) - point_radius - 2, (point_radius + 2) * 2,
                                         (point_radius + 2) * 2)
         else:
-            # 如果是原始曲线或其他电机的曲线，绘制普通控制点
             painter.setBrush(QBrush(color))
-            painter.drawEllipse(int(x1) - point_radius, int(y1) - point_radius, point_radius * 2, point_radius * 2)
-            painter.drawEllipse(int(x2) - point_radius, int(y2) - point_radius, point_radius * 2, point_radius * 2)
-            painter.drawEllipse(int(x3) - point_radius, int(y3) - point_radius, point_radius * 2, point_radius * 2)
-            painter.drawEllipse(int(x4) - point_radius, int(y4) - point_radius, point_radius * 2, point_radius * 2)
-            painter.drawEllipse(int(x5) - point_radius, int(y5) - point_radius, point_radius * 2, point_radius * 2)
+            for (xx, yy) in [(x1, y1), (x2, y2), (x3, y3), (x4, y4), (x5, y5)]:
+                painter.drawEllipse(int(xx) - point_radius, int(yy) - point_radius, point_radius * 2, point_radius * 2)
 
-        # 保存控制点位置，用于鼠标事件处理
-        if motor_data == self.curve_data.get(self.selected_motor, {}):
+        # 记录控制点像素位置
+        if not is_original and motor_data == self.curve_data.get(self.selected_motor, {}):
             self.control_points = {
                 "nt_end": (x1, y1),
                 "nt_mid": (x2, y2),
@@ -330,39 +352,26 @@ class CurveVisualizerWidget(QWidget):
                 "pt_mid": (x4, y4),
                 "pt_end": (x5, y5)
             }
-            self.control_values = {
-                "nt_end": nt_end,
-                "nt_mid": nt_mid,
-                "pt_mid": pt_mid,
-                "pt_end": pt_end
-            }
-            self.normalization = {
-                "thrust_range": thrust_range,
-                "mid_point": mid_point
-            }
+            # 当前拖拽反算需要的量程
+            self.output_range = (self.pwm_y_min, self.pwm_y_max) if self.mode == 'pwm' else (self.y_min, self.y_max)
 
     def draw_legend(self, painter):
-        """绘制图例"""
         width = self.width()
         height = self.height()
 
-        # 设置字体
-        font = QFont()
+        font = QFont();
         font.setPointSize(10)
         painter.setFont(font)
 
-        # 图例位置
-        legend_x = width - 200
-        legend_y = 20
-        legend_width = 180
-        legend_height = 100  # 增加高度以容纳拖拽提示
+        legend_x = width - 210
+        legend_y = 12
+        legend_w = 200
+        legend_h = 110
 
-        # 绘制图例背景
         painter.setPen(QPen(QColor(0, 0, 0), 1))
         painter.setBrush(QBrush(QColor(255, 255, 255, 200)))
-        painter.drawRect(legend_x, legend_y, legend_width, legend_height)
+        painter.drawRect(legend_x, legend_y, legend_w, legend_h)
 
-        # 绘制图例项
         if self.show_original_curve:
             painter.setPen(QPen(QColor(100, 100, 255), 2))
             painter.drawLine(legend_x + 10, legend_y + 20, legend_x + 40, legend_y + 20)
@@ -375,29 +384,21 @@ class CurveVisualizerWidget(QWidget):
             painter.setPen(QColor(0, 0, 0))
             painter.drawText(legend_x + 50, legend_y + 45, "修改后曲线")
 
-        painter.setPen(QPen(QColor(0, 150, 0), 2))
-        painter.drawLine(legend_x + 10, legend_y + 60, legend_x + 40, legend_y + 60)
-        painter.setPen(QColor(0, 0, 0))
-        painter.drawText(legend_x + 50, legend_y + 65, "控制器曲线")
 
-        # 添加拖拽提示
         painter.setPen(QColor(100, 100, 100))
         painter.drawText(legend_x + 10, legend_y + 85, "提示: 拖拽控制点调整曲线")
+        painter.drawText(legend_x + 10, legend_y + 100,
+                         f"当前模式: {'左右拖拽调节推力' if self.mode == 'pwm' else '上下拖拽调节PWM'}")
 
     def mousePressEvent(self, event):
-        """鼠标按下事件"""
         if not self.curve_data or self.selected_motor not in self.curve_data:
             return
 
         if event.button() == Qt.LeftButton and hasattr(self, 'control_points'):
-            # 检查是否点击了控制点
             pos = event.pos()
             for point_type, (x, y) in self.control_points.items():
-                # 跳过中心点，它是固定的
                 if point_type == "center":
                     continue
-
-                # 检查点击位置是否在控制点附近
                 if abs(pos.x() - x) <= 10 and abs(pos.y() - y) <= 10:
                     self.dragging = True
                     self.drag_point = (x, y)
@@ -407,57 +408,76 @@ class CurveVisualizerWidget(QWidget):
                     break
 
     def mouseMoveEvent(self, event):
-        """鼠标移动事件"""
         if not self.curve_data or self.selected_motor not in self.curve_data:
             return
 
-        # 如果鼠标悬停在控制点上，改变光标
+        # 悬停改变光标
         if not self.dragging and hasattr(self, 'control_points'):
             pos = event.pos()
-            hover_on_point = False
-
+            hover = False
             for point_type, (x, y) in self.control_points.items():
                 if point_type != "center" and abs(pos.x() - x) <= 10 and abs(pos.y() - y) <= 10:
                     self.setCursor(Qt.OpenHandCursor)
-                    hover_on_point = True
+                    hover = True
                     break
-
-            if not hover_on_point:
+            if not hover:
                 self.setCursor(Qt.ArrowCursor)
 
-        # 处理拖拽
+        # 拖拽
         if self.dragging and self.drag_point_type:
             pos = event.pos()
+            w = self.width()
             h = self.height()
             margin = 50
 
-            # 限制Y坐标在绘图区域内
-            y = max(margin, min(pos.y(), h - margin))
+            # 根据模式决定锁定哪个轴（但坐标系不变）
+            if self.mode == 'thrust':
+                # 推力模式：锁定X轴（推力值），只能调整Y轴（PWM值）
+                x = self.drag_point[0]  # 保持X不变
+                y = max(margin, min(pos.y(), h - margin))
 
-            # 计算归一化值 (从屏幕坐标转换回参数值)
-            norm_value = 2 * (h - margin - y) / (h - 2 * margin) - 1
+                # 像素Y -> PWM绝对值
+                pwm_value = self.pwm_y_min + ((h - margin - y) / (h - 2 * margin)) * (self.pwm_y_max - self.pwm_y_min)
 
-            # 根据拖拽的点类型更新相应的参数
-            if self.drag_point_type in ["nt_end", "nt_mid", "pt_mid", "pt_end"]:
-                # 从归一化值转换回实际参数值
-                thrust_range = self.normalization["thrust_range"]
-                actual_value = norm_value * thrust_range / 2
+                # 发送PWM值更新信号
+                if self.drag_point_type in ["nt_end", "nt_mid", "pt_mid", "pt_end"]:
+                    name = f"pwm_{self.drag_point_type}"
+                    self.point_dragged.emit(self.selected_motor, name, pwm_value)
 
-                # 发送信号通知参数变更
-                self.point_dragged.emit(self.selected_motor, self.drag_point_type, actual_value)
+                    # 本地PWM更新
+                    pd = self.pwm_data.setdefault(self.selected_motor, {})
+                    key = \
+                    {"nt_end": "pwm_nt_end", "nt_mid": "pwm_nt_mid", "pt_mid": "pwm_pt_mid", "pt_end": "pwm_pt_end"}[
+                        self.drag_point_type]
+                    pd[key] = pwm_value
 
-                # 更新拖拽点位置
-                self.drag_point = (self.drag_point[0], y)
-                self.update()
+                    self.drag_point = (x, y)
+                    self.update()
+            else:
+                # PWM模式：锁定Y轴（PWM值），只能调整X轴（推力值）
+                x = max(margin, min(pos.x(), w - margin))
+                y = self.drag_point[1]  # 保持Y不变
+
+                # 像素X -> 推力绝对值
+                x0, x1 = self.y_min, self.y_max  # 始终使用推力值范围
+                thrust_value = x0 + ((x - margin) / (w - 2 * margin)) * (x1 - x0)
+
+                # 发送推力值更新信号
+                if self.drag_point_type in ["nt_end", "nt_mid", "pt_mid", "pt_end"]:
+                    name = self.drag_point_type
+                    self.point_dragged.emit(self.selected_motor, name, thrust_value)
+
+                    self.drag_point = (x, y)
+                    self.update()
 
     def mouseReleaseEvent(self, event):
-        """鼠标释放事件"""
         if event.button() == Qt.LeftButton and self.dragging:
             self.dragging = False
             self.drag_point = None
             self.drag_point_type = None
             self.setCursor(Qt.ArrowCursor)
             self.update()
+
 
 
 class MotorTestPanel(QWidget):
@@ -989,38 +1009,38 @@ class MotorCurveEditor(QWidget):
         """初始化UI"""
         layout = QVBoxLayout(self)
 
-        # 创建位置参数组
-        position_group = QGroupBox("位置参数")
+        # 创建PWM参数组（位置参数实际上是PWM参数）
+        position_group = QGroupBox("PWM参数")
         position_layout = QFormLayout(position_group)
 
-        # 创建位置参数控件
+        # 创建PWM参数控件
         self.np_mid_spin = QDoubleSpinBox()
         self.np_mid_spin.setRange(0, 10000)
         self.np_mid_spin.setDecimals(2)
         self.np_mid_spin.setSingleStep(10)
         self.np_mid_spin.valueChanged.connect(self.update_curve)
-        position_layout.addRow("负向中点 (np_mid):", self.np_mid_spin)
+        position_layout.addRow("负向中点PWM (np_mid):", self.np_mid_spin)
 
         self.np_ini_spin = QDoubleSpinBox()
         self.np_ini_spin.setRange(0, 10000)
         self.np_ini_spin.setDecimals(2)
         self.np_ini_spin.setSingleStep(10)
         self.np_ini_spin.valueChanged.connect(self.update_curve)
-        position_layout.addRow("负向初始点 (np_ini):", self.np_ini_spin)
+        position_layout.addRow("负向终点PWM (np_ini):", self.np_ini_spin)
 
         self.pp_ini_spin = QDoubleSpinBox()
         self.pp_ini_spin.setRange(0, 10000)
         self.pp_ini_spin.setDecimals(2)
         self.pp_ini_spin.setSingleStep(10)
         self.pp_ini_spin.valueChanged.connect(self.update_curve)
-        position_layout.addRow("正向初始点 (pp_ini):", self.pp_ini_spin)
+        position_layout.addRow("正向终点PWM (pp_ini):", self.pp_ini_spin)
 
         self.pp_mid_spin = QDoubleSpinBox()
         self.pp_mid_spin.setRange(0, 10000)
         self.pp_mid_spin.setDecimals(2)
         self.pp_mid_spin.setSingleStep(10)
         self.pp_mid_spin.valueChanged.connect(self.update_curve)
-        position_layout.addRow("正向中点 (pp_mid):", self.pp_mid_spin)
+        position_layout.addRow("正向中点PWM (pp_mid):", self.pp_mid_spin)
 
         layout.addWidget(position_group)
 
@@ -1099,7 +1119,7 @@ class MotorCurveEditor(QWidget):
         self.pt_mid_spin.blockSignals(True)
         self.pt_end_spin.blockSignals(True)
 
-        # 设置位置参数
+        # 设置PWM参数（位置参数实际上是PWM参数）
         self.np_mid_spin.setValue(self.motor_data.get("np_mid", 0))
         self.np_ini_spin.setValue(self.motor_data.get("np_ini", 0))
         self.pp_ini_spin.setValue(self.motor_data.get("pp_ini", 0))
@@ -1126,7 +1146,7 @@ class MotorCurveEditor(QWidget):
         if not self.motor_data:
             return
 
-        # 更新电机数据
+        # 更新电机数据 - PWM参数（位置参数实际上是PWM参数）
         self.motor_data["np_mid"] = self.np_mid_spin.value()
         self.motor_data["np_ini"] = self.np_ini_spin.value()
         self.motor_data["pp_ini"] = self.pp_ini_spin.value()
@@ -1371,6 +1391,24 @@ class ThrustCurveDebugger(QMainWindow):
             # 更新曲线编辑器
             self.curve_editor.set_motor_data(motor_id, self.curve_data[motor_id], self.curve_data)
 
+            # 同步PWM参数到编辑器（如果存在）
+            if hasattr(self.curve_visualizer, 'pwm_data') and motor_id in self.curve_visualizer.pwm_data:
+                pwm_data = self.curve_visualizer.pwm_data[motor_id]
+                # 阻止信号循环
+                self.curve_editor.blockSignals(True)
+
+                # 映射PWM参数到位置参数控件
+                if "pwm_nt_end" in pwm_data:
+                    self.curve_editor.np_ini_spin.setValue(pwm_data["pwm_nt_end"])
+                if "pwm_nt_mid" in pwm_data:
+                    self.curve_editor.np_mid_spin.setValue(pwm_data["pwm_nt_mid"])
+                if "pwm_pt_mid" in pwm_data:
+                    self.curve_editor.pp_mid_spin.setValue(pwm_data["pwm_pt_mid"])
+                if "pwm_pt_end" in pwm_data:
+                    self.curve_editor.pp_ini_spin.setValue(pwm_data["pwm_pt_end"])
+
+                self.curve_editor.blockSignals(False)
+
             # 更新电机测试面板
             self.motor_test_panel.set_motor_id(motor_id)
 
@@ -1394,7 +1432,7 @@ class ThrustCurveDebugger(QMainWindow):
         self.curve_data[motor_id] = motor_data
 
         # 更新曲线可视化
-        self.curve_visualizer.update()
+        self.curve_visualizer.set_curve_data(self.curve_data, motor_id)
 
         # 更新状态栏
         self.statusBar().showMessage(f"已更新电机 {motor_id} 的曲线参数")
@@ -1405,7 +1443,16 @@ class ThrustCurveDebugger(QMainWindow):
             return
 
         # 更新曲线数据
-        self.curve_data[motor_id][point_type] = value
+        # 检查是否是PWM参数（以pwm_开头）
+        is_pwm_param = point_type.startswith("pwm_")
+
+        if is_pwm_param:
+            # 对于PWM参数，只更新曲线可视化器中的PWM数据，不更新curve_data
+            # 实际的PWM数据存储在curve_visualizer.pwm_data中
+            pass
+        else:
+            # 对于推力参数，更新curve_data
+            self.curve_data[motor_id][point_type] = value
 
         # 如果是当前选中的电机，更新编辑器UI
         if motor_id == self.motor_combo.currentText():
@@ -1413,14 +1460,27 @@ class ThrustCurveDebugger(QMainWindow):
             self.curve_editor.blockSignals(True)
 
             # 更新编辑器中的值
-            if point_type == "nt_end":
-                self.curve_editor.nt_end_spin.setValue(value)
-            elif point_type == "nt_mid":
-                self.curve_editor.nt_mid_spin.setValue(value)
-            elif point_type == "pt_mid":
-                self.curve_editor.pt_mid_spin.setValue(value)
-            elif point_type == "pt_end":
-                self.curve_editor.pt_end_spin.setValue(value)
+            if is_pwm_param:
+                # PWM参数 - 更新位置参数组中的值
+                base_type = point_type[4:]  # 移除"pwm_"前缀
+                if base_type == "nt_end":
+                    self.curve_editor.np_ini_spin.setValue(value)
+                elif base_type == "nt_mid":
+                    self.curve_editor.np_mid_spin.setValue(value)
+                elif base_type == "pt_mid":
+                    self.curve_editor.pp_mid_spin.setValue(value)
+                elif base_type == "pt_end":
+                    self.curve_editor.pp_ini_spin.setValue(value)
+            else:
+                # 推力参数 - 更新推力参数组中的值
+                if point_type == "nt_end":
+                    self.curve_editor.nt_end_spin.setValue(value)
+                elif point_type == "nt_mid":
+                    self.curve_editor.nt_mid_spin.setValue(value)
+                elif point_type == "pt_mid":
+                    self.curve_editor.pt_mid_spin.setValue(value)
+                elif point_type == "pt_end":
+                    self.curve_editor.pt_end_spin.setValue(value)
 
             self.curve_editor.blockSignals(False)
 
