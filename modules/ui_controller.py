@@ -59,6 +59,9 @@ class UIController:
                 {'last_press': 0, 'cooldown': self.key_cooldowns.get('controller_mapping_cooldown', 0.5)},  # 控制器映射编辑器
             self.keyboard_bindings.get('deploy_thrust_curves_key', 'c'):
                 {'last_press': 0, 'cooldown': self.key_cooldowns.get('deploy_thrust_curves_cooldown', 1.0)},  # 部署推力曲线
+            self.keyboard_bindings.get('toggle_joystick_correction_key', 'j'):
+                {'last_press': 0, 'cooldown': self.key_cooldowns.get('toggle_joystick_correction_cooldown', 0.5)},
+            # 切换手柄辅助修正
             'button7': {'last_press': 0, 'cooldown': self.key_cooldowns.get('button7_cooldown', 0.2)}  # 捕获当前帧（手柄按钮）
         }
 
@@ -161,6 +164,7 @@ class UIController:
         controller_visualizer_key = self.keyboard_bindings.get('controller_visualizer_key', 'v')
         controller_mapping_key = self.keyboard_bindings.get('controller_mapping_key', 'm')
         deploy_thrust_curves_key = self.keyboard_bindings.get('deploy_thrust_curves_key', 'c')
+        toggle_joystick_correction_key = self.keyboard_bindings.get('toggle_joystick_correction_key', 'j')
 
         # 处理键盘输入 - 使用非阻塞方式
         if keyboard.is_pressed(quit_key):
@@ -194,6 +198,14 @@ class UIController:
                 if main_controller:
                     self.deploy_thrust_curves(main_controller)
                 self.key_states[deploy_thrust_curves_key]['last_press'] = current_time
+
+        # 使用非阻塞方式处理切换手柄辅助修正键
+        if keyboard.is_pressed(toggle_joystick_correction_key):
+            if current_time - self.key_states[toggle_joystick_correction_key]['last_press'] > \
+                    self.key_states[toggle_joystick_correction_key]['cooldown']:
+                if main_controller:
+                    self.toggle_joystick_correction(main_controller)
+                self.key_states[toggle_joystick_correction_key]['last_press'] = current_time
 
         # 使用非阻塞方式处理切换屏幕方向键
         if keyboard.is_pressed(toggle_rotation_key):
@@ -446,6 +458,14 @@ class UIController:
             print("推力曲线部署命令已发送")
         except Exception as e:
             print(f"部署推力曲线失败: {e}")
+
+    def toggle_joystick_correction(self, main_controller):
+        """切换手柄辅助修正状态"""
+        try:
+            enabled = main_controller.joystick_controller.toggle_joystick_correction()
+            print(f"手柄辅助修正: {'已启用' if enabled else '已禁用'}")
+        except Exception as e:
+            print(f"切换手柄辅助修正失败: {e}")
 
 
 class JoystickHandler:

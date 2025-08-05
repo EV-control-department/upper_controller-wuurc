@@ -6,6 +6,7 @@
 import time
 
 from modules.hardware_controller import controller_curve
+from modules.joystick_correction import JoystickCorrection
 
 
 class JoystickController:
@@ -61,6 +62,39 @@ class JoystickController:
         # 获取控制器阈值设置
         self.thresholds = self.config_manager.get_controller_thresholds()
 
+        # 初始化手柄辅助修正
+        try:
+            # 检查joystick_correction是否是ConfigParser的section
+            if "joystick_correction" in self.config_manager.config:
+                # 使用ConfigParser的方式获取值
+                self.joystick_correction = JoystickCorrection({
+                    "detection_threshold": self.config_manager.config["joystick_correction"].getfloat(
+                        "detection_threshold", 0.1),
+                    "stationary_threshold": self.config_manager.config["joystick_correction"].getfloat(
+                        "stationary_threshold", 0.05),
+                    "correction_duration": self.config_manager.config["joystick_correction"].getfloat(
+                        "correction_duration", 0.5),
+                    "filter_strength": self.config_manager.config["joystick_correction"].getfloat("filter_strength",
+                                                                                                  2.0)
+                })
+            else:
+                # 使用默认值
+                self.joystick_correction = JoystickCorrection({
+                    "detection_threshold": 0.1,
+                    "stationary_threshold": 0.05,
+                    "correction_duration": 0.5,
+                    "filter_strength": 2.0
+                })
+        except Exception as e:
+            print(f"初始化手柄辅助修正失败: {str(e)}，使用默认值")
+            # 使用默认值
+            self.joystick_correction = JoystickCorrection({
+                "detection_threshold": 0.1,
+                "stationary_threshold": 0.05,
+                "correction_duration": 0.5,
+                "filter_strength": 2.0
+            })
+
     def update(self):
         """更新手柄状态"""
         self.joystick_handler.update_button_states()
@@ -103,50 +137,63 @@ class JoystickController:
 
     def process_axes(self):
         """处理控制器轴输入"""
-        # 处理控制器输入 - Yaw轴
+        # 获取轴配置
         yaw_axis = self.config_manager.get_axis_config("yaw")
-        if abs(self.joystick_handler.get_axis(yaw_axis["axis"])) >= yaw_axis["deadzone"]:
+        y_axis = self.config_manager.get_axis_config("y")
+        x_axis = self.config_manager.get_axis_config("x")
+        z_axis = self.config_manager.get_axis_config("z")
+
+        # 获取原始轴值
+        raw_yaw = self.joystick_handler.get_axis(yaw_axis["axis"])
+        raw_y = self.joystick_handler.get_axis(y_axis["axis"])
+        raw_x = self.joystick_handler.get_axis(x_axis["axis"])
+        raw_z = self.joystick_handler.get_axis(z_axis["axis"])
+
+        # 应用辅助修正
+        corrected_x, corrected_y, corrected_z, corrected_yaw = self.joystick_correction.process_axes(
+            raw_x, raw_y, raw_z, raw_yaw
+        )
+
+        # 处理控制器输入 - Yaw轴
+        if abs(corrected_yaw) >= yaw_axis["deadzone"]:
             self.controller_monitor.controller["yaw"] = (
                                                                 yaw_axis["max"] *
                                                                 self.speed_modes[self.speed_mode_ptr]["rate"]
                                                         ) * controller_curve(
-                self.joystick_handler.get_axis(yaw_axis["axis"])
+                corrected_yaw
             ) * (1 - (self.joystick_handler.get_axis(4) + 1) / 8)
         else:
             self.controller_monitor.controller["yaw"] = 0.0
 
         # 处理控制器输入 - Y轴（前后）
-        y_axis = self.config_manager.get_axis_config("y")
-        if abs(self.joystick_handler.get_axis(y_axis["axis"])) >= y_axis["deadzone"]:
+        if abs(corrected_y) >= y_axis["deadzone"]:
             self.controller_monitor.controller["y"] = (
                                                               y_axis["max"] *
                                                               self.speed_modes[self.speed_mode_ptr]["rate"]
                                                       ) * controller_curve(
-                self.joystick_handler.get_axis(y_axis["axis"])
+                corrected_y
             ) * (1 - (self.joystick_handler.get_axis(4) + 1) / 4)
         else:
             self.controller_monitor.controller["y"] = 0.0
 
         # 处理控制器输入 - X轴（左右）
-        x_axis = self.config_manager.get_axis_config("x")
-        if abs(self.joystick_handler.get_axis(x_axis["axis"])) >= x_axis["deadzone"]:
+        if abs(corrected_x) >= x_axis["deadzone"]:
             self.controller_monitor.controller["x"] = (
                                                               x_axis["max"] *
                                                               self.speed_modes[self.speed_mode_ptr]["rate"]
                                                       ) * controller_curve(
-                self.joystick_handler.get_axis(x_axis["axis"])
+                corrected_x
             ) * (1 - (self.joystick_handler.get_axis(4) + 1) / 4)
         else:
             self.controller_monitor.controller["x"] = 0.0
 
         # 处理控制器输入 - Z轴（上下）
-        z_axis = self.config_manager.get_axis_config("z")
-        if abs(self.joystick_handler.get_axis(z_axis["axis"])) >= z_axis["deadzone"] and not self.pid_state:
+        if abs(corrected_z) >= z_axis["deadzone"] and not self.pid_state:
             self.controller_monitor.controller["z"] = (
                                                               z_axis["max"] *
                                                               self.speed_modes[self.speed_mode_ptr]["rate"]
                                                       ) * controller_curve(
-                self.joystick_handler.get_axis(z_axis["axis"])
+                corrected_z
             ) * (1 - (self.joystick_handler.get_axis(4) + 1) / 8)
         else:
             self.controller_monitor.controller["z"] = 0.0
@@ -213,6 +260,12 @@ class JoystickController:
             self.catch_mode_ptr = (self.catch_mode_ptr + 1) % len(self.catch_modes)
             self.joystick_handler.start_rumble(9)
 
+    def toggle_joystick_correction(self):
+        """切换手柄辅助修正状态"""
+        enabled = self.joystick_correction.toggle()
+        print(f"手柄辅助修正: {'已启用' if enabled else '已禁用'}")
+        return enabled
+        
     def process_input(self):
         """处理所有手柄输入"""
         # 检查阻塞状态
@@ -221,6 +274,11 @@ class JoystickController:
 
         # 处理速度模式
         self.process_speed_mode()
+
+        # 处理辅助修正切换（按钮8 - 左摇杆按下）
+        if self.joystick_handler.buttons[8]["down"]:
+            self.toggle_joystick_correction()
+            self.joystick_handler.start_rumble(8)  # 提供震动反馈
 
         # 处理轴输入
         self.process_axes()
