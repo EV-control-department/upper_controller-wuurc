@@ -82,12 +82,18 @@ class MainController:
             self.hw_controller.hwinit()
             time.sleep(0.05)
 
+    def deploy_thrust_curves(self):
+        """部署推力曲线到ROV"""
+        print("正在部署推力曲线...")
+        self.hw_controller.hwinit()
+        print("推力曲线部署完成")
+
     def run(self):
         """运行主循环"""
         while self.running:
             # 处理事件
             frame_rgb = self.video_thread.get_latest_frame(self.ui_controller.show_undistorted)
-            self.running = self.ui_controller.handle_events(self.joystick_handler.joystick, self.video_thread)
+            self.running = self.ui_controller.handle_events(self.joystick_handler.joystick, self.video_thread, self)
 
             # 更新手柄状态
             self.joystick_controller.update()

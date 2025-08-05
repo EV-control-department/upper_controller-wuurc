@@ -1,117 +1,138 @@
-# 推力曲线调试器修改说明
+# 推力曲线调试器更新文档
 
-## 问题描述
+## 更新内容概述
 
-thrust_curve_debugger.py 下发数据时使用的是 0-1 范围的值，而不是参考 main.py 和 config 中 x, y, z 的极值（如 6000, 4000
-等）。这导致了电机控制不一致的问题。
+本次更新解决了推力曲线调试器 (`thrust_curve_debugger.py`) 中的以下问题：
 
-## 修改内容
+1. 在双曲线视图模式下，确保只有当前正在编辑的电机曲线可以被拖动，另一个电机曲线不可拖动
+2. 实现了电机选择队列机制，解决了选择三个以上电机按钮的情况
+3. 增强了UI反馈，使用户更容易识别当前正在编辑的电机
 
-修改了 `thrust_curve_debugger.py` 文件中的 `send_motor_command` 方法，使其在发送单个电机命令时也应用与
-`send_combined_motor_command` 方法相同的缩放逻辑：
+## 详细更改
 
-1. 应用 controller_curve 函数对输入值进行非线性映射
-2. 根据电机类型应用正确的幅度缩放：
-    - 电机 0, 1 (X轴/左右): 3000
-    - 电机 2, 3 (Y轴/前后): 5000
-    - 电机 4, 5 (Z轴/上下): 6000
+### 1. 防止非编辑电机的点被拖动
 
-这些值与 config_beyond.ini 中定义的极值一致。
-
-## 修改前后对比
-
-### 修改前
+修改了 `DraggablePointPlot` 类的 `on_press` 方法，添加了检查逻辑，确保在双曲线视图模式下，只有当前正在编辑的电机的点可以被拖动：
 
 ```python
-def send_motor_command(self, motor_id, speed):
-    """发送单个电机命令"""
-    if not SOCKET_AVAILABLE or not self.udp_socket:
-        self.debug_info_panel.add_log("警告: 网络通信不可用，无法发送命令")
-        return False
+def on_press(self, event):
+    if event.inaxes != self.axes: return
+    for artist in self.points_artists:
+        contains, _ = artist.contains(event)
+        if contains:
+            name = artist.get_gid()
 
-    try:
-        # 提取电机编号
-        motor_num = int(motor_id[1:])
+            # 检查是否是比较曲线的点
+            is_comparison_point = name.endswith('_comp')
 
-        # 创建命令数据
-        command = {
-            "type": "motor_test",
-            "motor": motor_num,
-            "speed": speed
-        }
+            # 在双曲线视图模式下，只允许拖动当前正在编辑的电机的点
+            if self.is_dual_view:
+                if (is_comparison_point and self.editing_primary_motor) or
+                        (not is_comparison_point and not self.editing_primary_motor):
+                    # 不允许拖动非编辑电机的点
+                    return
 
-        # 转换为JSON字符串
-        command_json = json.dumps(command)
-
-        # 发送数据 (添加换行符，与main.py中的发送方式保持一致)
-        self.udp_socket.sendto((command_json + '\n').encode('utf-8'), (self.remote_addr, self.remote_port))
-
-        return True
-    except Exception as e:
-        self.debug_info_panel.add_log(f"发送命令失败: {str(e)}")
-        return False
+            self._drag_point_info = (artist, name)
+            self.point_selected.emit(name);
+            return
 ```
 
-### 修改后
+### 2. 实现电机选择队列机制
+
+添加了电机选择队列属性，并修改了 `on_motor_button_clicked` 方法，实现了队列机制：
+
+1. 添加了 `motor_selection_queue` 属性，用于存储选中的电机队列
+2. 修改了 `on_motor_button_clicked` 方法，实现了以下逻辑：
+    - 当选择新电机时，将其添加到队列中
+    - 如果队列超过2个电机，移除最早的一个（不是当前主电机）
+    - 更新UI以反映队列变化
 
 ```python
-def send_motor_command(self, motor_id, speed):
-    """发送单个电机命令"""
-    if not SOCKET_AVAILABLE or not self.udp_socket:
-        self.debug_info_panel.add_log("警告: 网络通信不可用，无法发送命令")
-        return False
+# 在MainWindow类的__init__方法中添加队列属性
+# self.motor_selection_queue = []  # 用于存储选中的电机队列，最多保留两个
 
-    try:
-        # 提取电机编号
-        motor_num = int(motor_id[1:])
+# 在on_motor_button_clicked方法中实现队列管理逻辑
+# 当选择新电机时，将其添加到队列
+# if motor_name not in self.motor_selection_queue:
+#     self.motor_selection_queue.append(motor_name)
 
-        # 应用控制器曲线函数
-        curved_speed = controller_curve(speed)
+# 如果队列超过2个，移除最早的一个（不是当前主电机）
+# if len(self.motor_selection_queue) > 2:
+#     # 找到要移除的电机（不是当前选中的电机）
+#     to_remove = None
+#     for m in self.motor_selection_queue:
+#         if m != motor_name and m != self.current_motor:
+#             to_remove = m
+#             break
 
-        # 根据电机类型应用正确的幅度
-        # 根据config_beyond.ini中的设置: x=3000, y=5000, z=6000
-        scaled_speed = curved_speed
-        if motor_num in [0, 1]:  # 左右水平推进器 (X轴)
-            scaled_speed = 3000 * curved_speed
-        elif motor_num in [2, 3]:  # 前后水平推进器 (Y轴)
-            scaled_speed = 5000 * curved_speed
-        elif motor_num in [4, 5]:  # 上下垂直推进器 (Z轴)
-            scaled_speed = 6000 * curved_speed
+#     # 如果没有找到可移除的，移除最早的一个
+#     if to_remove is None and len(self.motor_selection_queue) > 0:
+#         to_remove = self.motor_selection_queue[0]
 
-        # 创建命令数据
-        command = {
-            "type": "motor_test",
-            "motor": motor_num,
-            "speed": scaled_speed
-        }
+#     # 移除电机并更新UI
+#     if to_remove is not None:
+#         self.motor_selection_queue.remove(to_remove)
+#         self.motor_buttons[to_remove].setChecked(False)
+#         self.motor_buttons[to_remove].setStyleSheet("")
 
-        # 转换为JSON字符串
-        command_json = json.dumps(command)
-
-        # 发送数据 (添加换行符，与main.py中的发送方式保持一致)
-        self.udp_socket.sendto((command_json + '\n').encode('utf-8'), (self.remote_addr, self.remote_port))
-
-        # 记录日志
-        self.debug_info_panel.add_log(
-            f"发送电机命令: 原始值={speed:.2f}, 曲线后={curved_speed:.2f}, 缩放后={scaled_speed:.2f}")
-
-        return True
-    except Exception as e:
-        self.debug_info_panel.add_log(f"发送命令失败: {str(e)}")
-        return False
+#         # 如果移除的是比较电机，清除比较电机
+#         if to_remove == self.comparison_motor:
+#             self.comparison_motor = None
 ```
 
-## 验证方法
+队列管理的主要逻辑：
 
-运行 `start_thrust_curve_debugger.bat` 脚本启动推力曲线调试工具，然后：
+1. 维护一个最多包含两个电机的队列
+2. 当选择新电机时，将其添加到队列
+3. 如果队列超过2个，移除最早的非主电机
+4. 更新UI以反映队列变化
 
-1. 使用单电机测试面板测试各个电机，观察日志面板中显示的原始值、曲线后值和缩放后值
-2. 确认缩放后的值与预期一致：
-    - 电机 0, 1: 最大约 ±3000
-    - 电机 2, 3: 最大约 ±5000
-    - 电机 4, 5: 最大约 ±6000
-3. 使用组合电机测试面板，确认 X、Y、Z 轴的值也正确缩放
+### 3. 增强UI反馈
 
-## 总结
+修改了 `_update_editing_motor_ui` 方法，增强了视觉反馈，使用户更容易识别当前正在编辑的电机：
 
-此修改确保了 thrust_curve_debugger.py 在发送单个电机命令时也使用与 main.py 和 config 文件中相同的极值范围，使电机控制行为保持一致。
+```python
+# 修改_update_editing_motor_ui方法以增强视觉反馈
+# def _update_editing_motor_ui(self):
+#     """更新UI以显示当前正在编辑的电机"""
+#     if self.editing_primary_motor:
+#         # 编辑主电机时的样式
+#         self.curve_params_group.setStyleSheet("QGroupBox { font-weight: bold; background-color: #f0f0ff; }")
+#         self.comparison_params_group.setStyleSheet("QGroupBox { font-weight: bold; color: #0066cc; }")
+#         self.switch_motor_btn.setText(f"当前编辑: {self.current_motor} (点击切换)")
+#         
+#         # 更新按钮样式，主电机使用实线边框
+#         self.motor_buttons[self.current_motor].setStyleSheet("background-color: #AED6F1; border: 2px solid #2980B9;")
+#         self.motor_buttons[self.comparison_motor].setStyleSheet("background-color: #D6E9F1; border: 1px dashed #5DADE2;")
+#     else:
+#         # 编辑比较电机时的样式
+#         self.curve_params_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+#         self.comparison_params_group.setStyleSheet("QGroupBox { font-weight: bold; color: #0066cc; background-color: #f0f0ff; }")
+#         self.switch_motor_btn.setText(f"当前编辑: {self.comparison_motor} (点击切换)")
+#         
+#         # 更新按钮样式，比较电机使用实线边框
+#         self.motor_buttons[self.current_motor].setStyleSheet("background-color: #AED6F1; border: 1px dashed #2980B9;")
+#         self.motor_buttons[self.comparison_motor].setStyleSheet("background-color: #D6E9F1; border: 2px solid #5DADE2;")
+```
+
+UI增强的主要改进：
+
+1. 当前正在编辑的电机按钮使用实线边框高亮显示
+2. 非编辑状态的电机按钮使用虚线边框显示
+3. 参数输入区域的背景色也会相应变化，以指示当前正在编辑的是哪个电机的参数
+
+## 使用说明
+
+1. **电机选择**：
+    - 在"电机选择与操作"区域中，最多可以同时选择两个电机
+    - 如果尝试选择第三个电机，系统会自动取消选择最早选择的非主电机
+
+2. **双曲线视图**：
+    - 在双曲线视图模式下，实线表示当前正在编辑的电机曲线，虚线表示比较电机曲线
+    - 只有当前正在编辑的电机曲线可以被拖动修改
+    - 可以通过"当前编辑: XX (点击切换)"按钮切换当前正在编辑的电机
+
+3. **视觉反馈**：
+    - 当前正在编辑的电机按钮使用实线边框高亮显示
+    - 非编辑状态的电机按钮使用虚线边框显示
+    - 参数输入区域的背景色也会相应变化，以指示当前正在编辑的是哪个电机的参数

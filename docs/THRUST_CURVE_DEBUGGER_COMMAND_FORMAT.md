@@ -266,7 +266,7 @@ def __init__(self):
     # 加载曲线数据
     self.curve_data = {}
     self.config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config",
-                                    "curve.json")
+                                    "curve_beyond.json")
     self.load_curve_data()
 
     # 初始化网络通信变量
@@ -291,7 +291,7 @@ def __init__(self):
     # 加载曲线数据
     self.curve_data = {}
     self.config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config",
-                                    "curve.json")
+                                    "curve_beyond.json")
     self.load_curve_data()
 
     # 初始化网络通信变量

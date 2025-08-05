@@ -57,6 +57,8 @@ class UIController:
             # 控制器可视化工具
             self.keyboard_bindings.get('controller_mapping_key', 'm'):
                 {'last_press': 0, 'cooldown': self.key_cooldowns.get('controller_mapping_cooldown', 0.5)},  # 控制器映射编辑器
+            self.keyboard_bindings.get('deploy_thrust_curves_key', 'c'):
+                {'last_press': 0, 'cooldown': self.key_cooldowns.get('deploy_thrust_curves_cooldown', 1.0)},  # 部署推力曲线
             'button7': {'last_press': 0, 'cooldown': self.key_cooldowns.get('button7_cooldown', 0.2)}  # 捕获当前帧（手柄按钮）
         }
 
@@ -128,13 +130,14 @@ class UIController:
             self.default_image = None
             return None
 
-    def handle_events(self, joystick, video_thread):
+    def handle_events(self, joystick, video_thread, main_controller=None):
         """
         处理pygame事件和键盘输入
         
         参数:
             joystick: 手柄对象
             video_thread: 视频处理线程
+            main_controller: 主控制器实例，用于部署推力曲线
             
         返回:
             running: 是否继续运行
@@ -157,6 +160,7 @@ class UIController:
         capture_frame_key = self.keyboard_bindings.get('capture_frame_key', 'p')
         controller_visualizer_key = self.keyboard_bindings.get('controller_visualizer_key', 'v')
         controller_mapping_key = self.keyboard_bindings.get('controller_mapping_key', 'm')
+        deploy_thrust_curves_key = self.keyboard_bindings.get('deploy_thrust_curves_key', 'c')
 
         # 处理键盘输入 - 使用非阻塞方式
         if keyboard.is_pressed(quit_key):
@@ -182,6 +186,14 @@ class UIController:
                     self.key_states[controller_mapping_key]['cooldown']:
                 self.open_controller_mapping_editor()
                 self.key_states[controller_mapping_key]['last_press'] = current_time
+
+        # 使用非阻塞方式处理部署推力曲线键
+        if keyboard.is_pressed(deploy_thrust_curves_key):
+            if current_time - self.key_states[deploy_thrust_curves_key]['last_press'] > \
+                    self.key_states[deploy_thrust_curves_key]['cooldown']:
+                if main_controller:
+                    self.deploy_thrust_curves(main_controller)
+                self.key_states[deploy_thrust_curves_key]['last_press'] = current_time
 
         # 使用非阻塞方式处理切换屏幕方向键
         if keyboard.is_pressed(toggle_rotation_key):
@@ -426,6 +438,14 @@ class UIController:
             print("控制器映射编辑器启动成功")
         except Exception as e:
             print(f"启动控制器映射编辑器失败: {e}")
+
+    def deploy_thrust_curves(self, main_controller):
+        """部署推力曲线到ROV"""
+        try:
+            main_controller.deploy_thrust_curves()
+            print("推力曲线部署命令已发送")
+        except Exception as e:
+            print(f"部署推力曲线失败: {e}")
 
 
 class JoystickHandler:

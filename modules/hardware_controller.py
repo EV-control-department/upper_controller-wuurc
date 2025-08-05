@@ -145,6 +145,8 @@ class NetworkWorker(threading.Thread):
         self.task_in_progress = False
         self.task_event = threading.Event()
         self.running = True
+        self.last_thrust_update = 0
+        self.thrust_update_interval = 5.0  # 推力曲线更新间隔（秒）
 
     def run(self):
         """线程主循环"""
@@ -153,6 +155,14 @@ class NetworkWorker(threading.Thread):
                                                                                                       'controller_monitor'):
             print("NetworkWorker初始化不完整")
             return
+
+        # 初始化时部署一次推力曲线
+        try:
+            self.hardware_controller.hwinit()
+            self.last_thrust_update = time.time()
+            print("初始化时部署推力曲线")
+        except Exception as e:
+            print(f"初始化部署推力曲线失败: {str(e)}")
 
         while self.running:
             self.task_event.wait()  # 等待被设置
@@ -164,6 +174,15 @@ class NetworkWorker(threading.Thread):
             self.task_in_progress = True
 
             try:
+                # 检查是否需要更新推力曲线
+                # current_time = time.time()
+                # time_since_last_update = current_time - self.last_thrust_update
+                # if time_since_last_update > self.thrust_update_interval:
+                #     # 发送控制器数据前更新推力曲线
+                #     self.hardware_controller.hwinit()
+                #     print(f"已更新推力曲线，间隔: {time_since_last_update:.1f}秒")
+                #     self.last_thrust_update = current_time
+                
                 # 发送控制器数据
                 self.hardware_controller.send_controller_data(self.controller_monitor.controller)
 

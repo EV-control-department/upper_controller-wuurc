@@ -198,7 +198,8 @@ class ConfigManager:
             "toggle_fullscreen_key": self.config["keyboard_bindings"].get("toggle_fullscreen_key"),
             "capture_frame_key": self.config["keyboard_bindings"].get("capture_frame_key"),
             "controller_visualizer_key": self.config["keyboard_bindings"].get("controller_visualizer_key", "v"),
-            "controller_mapping_key": self.config["keyboard_bindings"].get("controller_mapping_key", "m")
+            "controller_mapping_key": self.config["keyboard_bindings"].get("controller_mapping_key", "m"),
+            "deploy_thrust_curves_key": self.config["keyboard_bindings"].get("deploy_thrust_curves_key", "c")
         }
 
     def get_key_cooldowns(self):
@@ -212,5 +213,6 @@ class ConfigManager:
             "button7_cooldown": self.config["key_cooldowns"].getfloat("button7_cooldown"),
             "controller_visualizer_cooldown": self.config["key_cooldowns"].getfloat("controller_visualizer_cooldown",
                                                                                     0.5),
-            "controller_mapping_cooldown": self.config["key_cooldowns"].getfloat("controller_mapping_cooldown", 0.5)
+            "controller_mapping_cooldown": self.config["key_cooldowns"].getfloat("controller_mapping_cooldown", 0.5),
+            "deploy_thrust_curves_cooldown": self.config["key_cooldowns"].getfloat("deploy_thrust_curves_cooldown", 1.0)
         }
