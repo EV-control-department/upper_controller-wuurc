@@ -111,11 +111,15 @@ class MainController:
 
             # 显示控制器数据和模式信息
             modes = self.joystick_controller.get_current_modes()
+            # 获取手柄辅助修正状态
+            joystick_correction_enabled = self.joystick_controller.joystick_correction.enabled
             self.ui_controller.display_controller_data(
                 self.controller_monitor.controller,
+
                 self.controller_monitor.depth,
                 self.controller_monitor.temperature,
-                modes
+                modes,
+                joystick_correction_enabled
             )
 
             # 更新显示

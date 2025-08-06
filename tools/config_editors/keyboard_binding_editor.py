@@ -104,7 +104,8 @@ class KeyboardBindingEditor(QMainWindow):
     def load_default_config(self):
         """加载默认配置文件"""
         # 获取可能的配置文件路径
-        config_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config")
+        config_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                                  "config")
         config_files = [f for f in os.listdir(config_dir) if f.endswith('.ini')]
 
         # 添加到下拉框
@@ -178,7 +179,11 @@ class KeyboardBindingEditor(QMainWindow):
             'toggle_rotation_key': '切换屏幕方向',
             'toggle_undistorted_key': '切换无失真视图',
             'toggle_fullscreen_key': '切换全屏',
-            'capture_frame_key': '捕获当前帧'
+            'capture_frame_key': '捕获当前帧',
+            'controller_visualizer_key': '控制器可视化工具',
+            'controller_mapping_key': '控制器映射编辑器',
+            'deploy_thrust_curves_key': '部署推力曲线',
+            'toggle_joystick_correction_key': '切换手柄辅助修正'
         }
 
         # 添加键盘绑定
@@ -211,7 +216,11 @@ class KeyboardBindingEditor(QMainWindow):
             'toggle_undistorted_cooldown': '切换无失真视图',
             'toggle_fullscreen_cooldown': '切换全屏',
             'capture_frame_cooldown': '捕获当前帧',
-            'button7_cooldown': '手柄按钮7'
+            'button7_cooldown': '手柄按钮7',
+            'controller_visualizer_cooldown': '控制器可视化工具',
+            'controller_mapping_cooldown': '控制器映射编辑器',
+            'deploy_thrust_curves_cooldown': '部署推力曲线',
+            'toggle_joystick_correction_cooldown': '切换手柄辅助修正'
         }
 
         # 添加冷却时间

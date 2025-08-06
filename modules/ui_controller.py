@@ -336,7 +336,7 @@ class UIController:
             scaled_default = pygame.transform.scale(self.default_image, (screen_width, screen_height))
             self.screen.blit(scaled_default, (0, 0))
 
-    def display_controller_data(self, controller_data, depth, temperature, modes):
+    def display_controller_data(self, controller_data, depth, temperature, modes, joystick_correction_enabled=None):
         """
         显示控制器数据和模式信息
         
@@ -345,6 +345,7 @@ class UIController:
             depth: 深度值
             temperature: 温度值
             modes: 模式信息字典
+            joystick_correction_enabled: 手柄辅助修正是否启用
         """
         padding = self.settings['padding']
         screen_width, screen_height = self.screen.get_size()
@@ -363,6 +364,12 @@ class UIController:
             f"深度: {depth:.3f} m",
             f"温度: {temperature:.2f} °C"
         ]
+
+        # 添加手柄辅助修正状态
+        if joystick_correction_enabled is not None:
+            status_text = "辅助修正: 已启用" if joystick_correction_enabled else "辅助修正: 已禁用"
+            status_color = (0, 255, 0) if joystick_correction_enabled else (255, 165, 0)  # 绿色表示启用，橙色表示禁用
+            right_data_lines.append(status_text)
 
         # 渲染控制器数据
         y_offset = padding
@@ -395,7 +402,7 @@ class UIController:
 
         # 渲染传感器数据
         y_offset = padding
-        for line in right_data_lines:
+        for i, line in enumerate(right_data_lines):
             text_width = self.font.size(line)[0]
 
             if self.rotate_mode:
@@ -403,10 +410,15 @@ class UIController:
             else:
                 x_pos = screen_width - text_width - padding
 
+            # 使用特定颜色显示辅助修正状态
+            text_color = (255, 255, 255)  # 默认白色
+            if i == 2 and joystick_correction_enabled is not None:  # 第三行是辅助修正状态
+                text_color = status_color
+
             if self.rotate_mode:
-                self.draw_text(line, y_offset, 250, color=(255, 255, 255))
+                self.draw_text(line, y_offset, 250, color=text_color)
             else:
-                self.draw_text(line, x_pos, self.settings['y_h'] + y_offset, color=(255, 255, 255))
+                self.draw_text(line, x_pos, self.settings['y_h'] + y_offset, color=text_color)
 
             y_offset += self.settings['y_offset']
 

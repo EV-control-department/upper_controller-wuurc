@@ -1,24 +1,22 @@
 import json
-import sys
-import time
-import socket
-import re
 import os
+import platform
+import re
+import socket
+import sys
 import threading
+import time
 from datetime import datetime
+
+import matplotlib
+import numpy as np
+from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QComboBox, QPushButton, QLabel, QLineEdit, QGridLayout, QGroupBox,
                              QMessageBox, QFileDialog, QSlider, QListWidget, QListWidgetItem,
                              QSplitter, QSizePolicy)
-from PyQt5.QtCore import Qt, pyqtSignal, QTimer
-
-import matplotlib
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-from matplotlib import text
-from mpl_toolkits.mplot3d import Axes3D
-import numpy as np
-import platform
 
 matplotlib.use('Qt5Agg')
 
@@ -401,7 +399,6 @@ class ThrustVisualization(FigureCanvas):
                            linewidth=2)
 
         # 添加透明面板以增强3D效果
-        from matplotlib.patches import Polygon
         from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
         # 定义面
@@ -974,10 +971,35 @@ class MainWindow(QMainWindow):
         self.target_address = ("192.168.0.233", 2200)
 
         # Track the current loaded JSON file path
-        self.current_json_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config", "curve_beyond.json")
+        # First try to find the JSON file relative to the script location
+        script_relative_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "config",
+                                            "curve_beyond.json")
+
+        # Also check for the file relative to the current working directory
+        cwd_relative_path = os.path.join(os.getcwd(), "config", "curve_beyond.json")
+
+        # Use the first path that exists
+        if os.path.exists(script_relative_path):
+            self.current_json_path = script_relative_path
+        elif os.path.exists(cwd_relative_path):
+            self.current_json_path = cwd_relative_path
+        else:
+            # If neither path exists, default to the script relative path but don't try to load it yet
+            self.current_json_path = script_relative_path
+            print(f"警告: 无法找到默认JSON文件: {script_relative_path}")
+            print(f"也检查了: {cwd_relative_path}")
+            print("请使用'导入JSON'按钮手动选择文件。")
 
         self._init_ui()
-        self.load_curve_data(self.current_json_path, is_initial_load=True)
+
+        # Only try to load the file if it exists
+        if os.path.exists(self.current_json_path):
+            self.load_curve_data(self.current_json_path, is_initial_load=True)
+        else:
+            # Initialize with empty data
+            self.motor_data = {f"m{i}": {"num": i} for i in range(MOTOR_COUNT)}
+            self.initial_motor_data = self.motor_data.copy()
+            self.history_log = {key: [] for key in self.motor_data.keys()}
 
         # Select the first motor button by default
         if self.motor_buttons and self.current_motor:
@@ -1102,7 +1124,7 @@ class MainWindow(QMainWindow):
         right_main_panel = QWidget()
         right_main_layout = QVBoxLayout(right_main_panel)
         right_main_layout.setContentsMargins(5, 5, 5, 5)
-        
+
         # 创建顶部工具栏
         toolbar_layout = QHBoxLayout()
         self.dual_view_btn = QPushButton("双曲线视图")
@@ -1115,7 +1137,7 @@ class MainWindow(QMainWindow):
         self.switch_motor_btn.setEnabled(False)  # 初始禁用，只有在双曲线模式下才启用
         self.switch_motor_btn.clicked.connect(self.switch_editing_motor)
         toolbar_layout.addWidget(self.switch_motor_btn)
-        
+
         toolbar_layout.addStretch()
 
         # 创建参数面板容器
@@ -1854,8 +1876,20 @@ class MainWindow(QMainWindow):
 
     def load_curve_data(self, filepath, is_initial_load=False):
         try:
-            with open(filepath, 'r') as f:
-                loaded_data = json.load(f)
+            # Check if file exists
+            if not os.path.exists(filepath):
+                raise FileNotFoundError(f"文件不存在: {filepath}")
+
+            # Try to open and parse the file
+            try:
+                with open(filepath, 'r') as f:
+                    loaded_data = json.load(f)
+            except json.JSONDecodeError as json_err:
+                raise ValueError(f"JSON格式错误: {json_err}")
+            except UnicodeDecodeError:
+                raise ValueError("文件编码错误，请确保文件使用UTF-8编码")
+            except PermissionError:
+                raise PermissionError(f"没有权限读取文件: {filepath}")
 
             # Standardize the keys from the loaded data
             self.motor_data = {}
@@ -1897,9 +1931,24 @@ class MainWindow(QMainWindow):
             self.current_json_display.setText(filepath)
 
             self._update_ui_for_motor()
+            print(f"成功加载JSON文件: {filepath}")
 
+        except FileNotFoundError as e:
+            error_msg = f"文件不存在: {filepath}\n\n请检查文件路径是否正确，并确保文件存在。"
+            print(f"错误: {error_msg}")
+            QMessageBox.critical(self, "文件未找到", error_msg)
+        except PermissionError as e:
+            error_msg = f"没有权限读取文件: {filepath}\n\n请检查文件权限。"
+            print(f"错误: {error_msg}")
+            QMessageBox.critical(self, "权限错误", error_msg)
+        except ValueError as e:
+            error_msg = f"文件格式错误: {e}\n\n请确保文件是有效的JSON格式。"
+            print(f"错误: {error_msg}")
+            QMessageBox.critical(self, "格式错误", error_msg)
         except Exception as e:
-            QMessageBox.critical(self, "加载失败", f"无法加载或解析JSON文件: {e}")
+            error_msg = f"无法加载或解析JSON文件: {e}"
+            print(f"错误: {error_msg}")
+            QMessageBox.critical(self, "加载失败", error_msg)
 
     def save_curve_data(self, filepath):
         try:

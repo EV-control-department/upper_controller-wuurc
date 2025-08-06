@@ -16,7 +16,7 @@ from PyQt5.QtWidgets import (
 )
 
 # 添加项目根目录到路径
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from modules.config_manager import ConfigManager
 
 
@@ -104,7 +104,13 @@ class ButtonMappingWidget(QWidget):
         self.description = description
 
         # 获取当前配置
-        self.button_value = self.config_manager.config[section].getint(key)
+        # 对于键盘绑定部分，值可能是字符而不是整数
+        if section == "keyboard_bindings":
+            self.button_value = self.config_manager.config[section].get(key)
+            self.is_keyboard_binding = True
+        else:
+            self.button_value = self.config_manager.config[section].getint(key)
+            self.is_keyboard_binding = False
 
         # 创建布局
         layout = QFormLayout(self)
@@ -116,12 +122,25 @@ class ButtonMappingWidget(QWidget):
         desc_label.setFont(font)
         layout.addRow(desc_label)
 
-        # 创建按钮选择下拉框
-        self.button_combo = QSpinBox()
-        self.button_combo.setMinimum(0)
-        self.button_combo.setMaximum(15)  # 假设最多16个按钮
-        self.button_combo.setValue(self.button_value)
-        layout.addRow("按钮编号:", self.button_combo)
+        # 创建输入控件
+        if self.is_keyboard_binding:
+            # 对于键盘绑定，使用文本标签显示当前值
+            self.key_label = QLabel(self.button_value)
+            self.change_button = QPushButton("更改按键")
+            self.change_button.clicked.connect(self.change_key)
+            key_layout = QHBoxLayout()
+            key_layout.addWidget(self.key_label)
+            key_layout.addWidget(self.change_button)
+            layout.addRow("按键:", key_layout)
+            # 隐藏按钮编号控件
+            self.button_combo = None
+        else:
+            # 对于按钮映射，使用数字选择框
+            self.button_combo = QSpinBox()
+            self.button_combo.setMinimum(0)
+            self.button_combo.setMaximum(15)  # 假设最多16个按钮
+            self.button_combo.setValue(self.button_value)
+            layout.addRow("按钮编号:", self.button_combo)
 
         # 创建测试区域
         self.test_label = QLabel("未检测到控制器")
@@ -132,9 +151,55 @@ class ButtonMappingWidget(QWidget):
         self.apply_button.clicked.connect(self.apply_changes)
         layout.addRow("", self.apply_button)
 
+    def change_key(self):
+        """更改键盘绑定按键"""
+        # 创建一个简单的对话框来捕获按键
+        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("按键捕获")
+        layout = QVBoxLayout(dialog)
+
+        label = QLabel(f"请按下要用于 '{self.description}' 的键...")
+        layout.addWidget(label)
+
+        key_label = QLabel("等待按键...")
+        layout.addWidget(key_label)
+
+        button = QPushButton("确定")
+        button.setEnabled(False)
+        layout.addWidget(button)
+
+        captured_key = [None]  # 使用列表存储捕获的按键，以便在闭包中修改
+
+        def on_key_press(event):
+            key = event.text()
+            if key and key.isprintable():
+                key_label.setText(f"捕获的按键: {key}")
+                captured_key[0] = key
+                button.setEnabled(True)
+            dialog.keyPressEvent = original_key_press
+
+        original_key_press = dialog.keyPressEvent
+        dialog.keyPressEvent = on_key_press
+
+        button.clicked.connect(dialog.accept)
+
+        if dialog.exec_() == QDialog.Accepted and captured_key[0]:
+            # 更新UI和配置
+            self.key_label.setText(captured_key[0])
+            self.button_value = captured_key[0]
+            self.config_manager.config[self.section][self.key] = captured_key[0]
+            QMessageBox.information(self, "更改已应用",
+                                    f"{self.description}按键已更新为 '{captured_key[0]}'。\n注意：需要保存配置文件才能永久保存更改。")
+
     def update_test_value(self, joystick):
         """更新测试值显示"""
-        if joystick and self.button_combo.value() < joystick.get_numbuttons():
+        if self.is_keyboard_binding:
+            # 键盘绑定不需要实时测试
+            self.test_label.setText("键盘按键")
+            self.test_label.setStyleSheet("color: blue;")
+        elif joystick and self.button_combo and self.button_combo.value() < joystick.get_numbuttons():
             value = joystick.get_button(self.button_combo.value())
             self.test_label.setText("按下" if value else "未按下")
             self.test_label.setStyleSheet("color: red;" if value else "color: black;")
@@ -145,14 +210,20 @@ class ButtonMappingWidget(QWidget):
     def apply_changes(self):
         """应用更改到配置"""
         try:
-            # 更新配置
-            self.config_manager.config[self.section][self.key] = str(self.button_combo.value())
+            # 对于键盘绑定，更改按键已经在change_key方法中处理
+            if not self.is_keyboard_binding and self.button_combo:
+                # 更新配置
+                self.config_manager.config[self.section][self.key] = str(self.button_combo.value())
 
-            # 更新本地值
-            self.button_value = self.button_combo.value()
+                # 更新本地值
+                self.button_value = self.button_combo.value()
 
-            QMessageBox.information(self, "更改已应用",
-                                    f"{self.description}按钮映射已更新。\n注意：需要保存配置文件才能永久保存更改。")
+                QMessageBox.information(self, "更改已应用",
+                                        f"{self.description}按钮映射已更新。\n注意：需要保存配置文件才能永久保存更改。")
+            elif self.is_keyboard_binding:
+                # 对于键盘绑定，提示用户使用"更改按键"按钮
+                QMessageBox.information(self, "提示",
+                                        f"请使用\"更改按键\"按钮来修改{self.description}的键盘绑定。")
         except Exception as e:
             QMessageBox.critical(self, "错误", f"应用更改时出错: {str(e)}")
 
@@ -167,10 +238,6 @@ class ControllerMappingEditor(QMainWindow):
         # 设置窗口属性
         self.setWindowTitle("ROV控制器映射编辑器")
         self.setMinimumSize(800, 600)
-
-        # 初始化pygame
-        pygame.init()
-        pygame.joystick.init()
 
         # 初始化配置
         self.config = ConfigParser()
@@ -250,7 +317,8 @@ class ControllerMappingEditor(QMainWindow):
     def load_default_config(self):
         """加载默认配置文件"""
         # 获取可能的配置文件路径
-        config_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config")
+        config_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                                  "config")
         config_files = [f for f in os.listdir(config_dir) if f.endswith('.ini')]
 
         # 添加到下拉框
@@ -454,6 +522,19 @@ class ControllerMappingEditor(QMainWindow):
 
         buttons_layout.addWidget(mode_group)
 
+        # 创建辅助功能按钮映射组
+        aux_group = QGroupBox("辅助功能按钮")
+        aux_layout = QVBoxLayout(aux_group)
+
+        # 手柄辅助修正按钮
+        joystick_correction_widget = ButtonMappingWidget(
+            self.config_manager, "keyboard_bindings", "toggle_joystick_correction_key", "手柄辅助修正切换"
+        )
+        aux_layout.addWidget(joystick_correction_widget)
+        self.button_widgets["toggle_joystick_correction_key"] = joystick_correction_widget
+
+        buttons_layout.addWidget(aux_group)
+
         # 添加弹性空间
         buttons_layout.addStretch()
 
@@ -512,6 +593,11 @@ class ControllerMappingEditor(QMainWindow):
 def main():
     """主函数"""
     app = QApplication(sys.argv)
+
+    # 初始化pygame
+    pygame.init()
+    pygame.joystick.init()
+
     window = ControllerMappingEditor()
     window.show()
     sys.exit(app.exec_())

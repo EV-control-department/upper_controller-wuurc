@@ -172,7 +172,7 @@ class JoystickController:
                                                               self.speed_modes[self.speed_mode_ptr]["rate"]
                                                       ) * controller_curve(
                 corrected_y
-            ) * (1 - (self.joystick_handler.get_axis(4) + 1) / 4)
+            ) * (1 - (self.joystick_handler.get_axis(4) + 1) / 8)
         else:
             self.controller_monitor.controller["y"] = 0.0
 
