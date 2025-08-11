@@ -162,16 +162,23 @@ class VideoThread(threading.Thread):
         返回:
             最新的视频帧，如果队列为空返回None
         """
-        if self.frame_queue:
-            with self.lock:  # 使用锁来确保线程安全
-                latest_frame = self.frame_queue[-1]
+        try:
+            if self.frame_queue:
+                with self.lock:  # 使用锁来确保线程安全
+                    if len(self.frame_queue) > 0:  # 再次检查队列是否为空
+                        latest_frame = self.frame_queue[-1]
+                    else:
+                        return None
 
-            if show_undistorted:
-                undistorted_frame = undistort_frame(latest_frame, self.base_width, self.base_height)
-                return undistorted_frame
-            else:
-                return latest_frame
-        return None
+                if show_undistorted:
+                    undistorted_frame = undistort_frame(latest_frame, self.base_width, self.base_height)
+                    return undistorted_frame
+                else:
+                    return latest_frame
+            return None
+        except Exception as e:
+            print(f"获取视频帧时出错: {str(e)}")
+            return None
 
     def save_frame(self, frame):
         """

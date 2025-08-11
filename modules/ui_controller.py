@@ -4,6 +4,7 @@
 """
 
 import os
+import random
 import subprocess
 import time
 
@@ -70,6 +71,27 @@ class UIController:
         self._init_display()
         self._init_font()
         self._load_icon()
+
+        # 读取温度回退配置（用于异常时显示默认温度）
+        self.default_temperature = 22.5
+        self.fake_temp_jitter = 0.1
+        # 温度显示的变化速度限制（单位：°C/秒），将速度调小10倍（默认0.1）
+        self.temp_slew_rate = 0.1
+        # 内部温度显示状态与时间戳
+        self._temp_display_value = None
+        self._last_temp_time = time.time()
+        try:
+            if self.config_manager and hasattr(self.config_manager, 'config'):
+                if self.config_manager.config.has_section('sensor_fallback'):
+                    self.default_temperature = self.config_manager.config['sensor_fallback'].getfloat(
+                        'default_temperature', fallback=self.default_temperature)
+                    # 可选：从配置读取温度变化速度限制
+                    if 'temperature_slew_rate' in self.config_manager.config['sensor_fallback']:
+                        self.temp_slew_rate = self.config_manager.config['sensor_fallback'].getfloat(
+                            'temperature_slew_rate', fallback=self.temp_slew_rate)
+        except Exception as e:
+            print(
+                f"读取默认温度/速度配置失败，使用默认值 {self.default_temperature}°C, slew={self.temp_slew_rate}°C/s: {e}")
 
     def _init_display(self):
         """初始化显示窗口"""
@@ -241,29 +263,36 @@ class UIController:
 
             if button7_pressed:
                 if current_time - self.key_states['button7']['last_press'] > self.key_states['button7']['cooldown']:
-                    frame = video_thread.get_latest_frame(self.show_undistorted)
-                    if frame is not None:
-                        video_thread.save_frame(frame)
+                    try:
+                        frame = video_thread.get_latest_frame(self.show_undistorted)
+                        if frame is not None:
+                            video_thread.save_frame(frame)
+                    except Exception as e:
+                        print(f"捕获帧时发生异常: {str(e)}")
                     self.key_states['button7']['last_press'] = current_time
             elif p_key_pressed:
                 if current_time - self.key_states[capture_frame_key]['last_press'] > self.key_states[capture_frame_key][
                     'cooldown']:
-                    frame = video_thread.get_latest_frame(self.show_undistorted)
-                    if frame is not None:
-                        video_thread.save_frame(frame)
+                    try:
+                        frame = video_thread.get_latest_frame(self.show_undistorted)
+                        if frame is not None:
+                            video_thread.save_frame(frame)
+                    except Exception as e:
+                        print(f"捕获帧时发生异常: {str(e)}")
                     self.key_states[capture_frame_key]['last_press'] = current_time
 
         return running
 
-    def draw_text(self, text, x, y, color=(255, 255, 255), bold=False, outline_thickness=3):
+    def draw_text(self, text, x, y, color=(255, 255, 255), bold=False, outline=True, outline_thickness=1):
         """
-        绘制带轮廓的文本
+        绘制文本，可选带轮廓
         
         参数:
             text: 文本内容
             x, y: 文本位置
             color: 文本颜色
             bold: 是否加粗
+            outline: 是否绘制轮廓
             outline_thickness: 轮廓厚度
         """
         # 使用已初始化的字体，确保中文显示正常
@@ -272,24 +301,28 @@ class UIController:
         # 如果需要加粗
         if bold:
             word_font.set_bold(True)
-
-        # 渲染并旋转轮廓
-        outline_surface = word_font.render(text, True, (0, 0, 0))  # 黑色轮廓
-        if self.rotate_mode:
-            outline_surface = pygame.transform.rotate(outline_surface, 90)
-
-        # 获取旋转后轮廓的宽度和高度
-        outline_width, outline_height = outline_surface.get_size()
-
-        # 旋转后轮廓位置的计算
-        if self.rotate_mode:
-            outline_x = x - outline_width + 28  # 旋转后的轮廓左上角X
-            outline_y = y - outline_height  # 旋转后的轮廓左上角Y
         else:
-            outline_x, outline_y = x, y
+            word_font.set_bold(False)  # 确保不加粗
 
-        # 绘制轮廓
-        self.screen.blit(outline_surface, (outline_x, outline_y))
+        # 如果需要绘制轮廓
+        if outline:
+            # 渲染并旋转轮廓
+            outline_surface = word_font.render(text, True, (0, 0, 0))  # 黑色轮廓
+            if self.rotate_mode:
+                outline_surface = pygame.transform.rotate(outline_surface, 90)
+
+            # 获取旋转后轮廓的宽度和高度
+            outline_width, outline_height = outline_surface.get_size()
+
+            # 旋转后轮廓位置的计算
+            if self.rotate_mode:
+                outline_x = x - outline_width + 36  # 旋转后的轮廓左上角X
+                outline_y = y - outline_height  # 旋转后的轮廓左上角Y
+            else:
+                outline_x, outline_y = x, y
+
+            # 绘制轮廓
+            self.screen.blit(outline_surface, (outline_x, outline_y))
 
         # 渲染文本
         video_text_surface = word_font.render(text, True, color)
@@ -314,7 +347,7 @@ class UIController:
         显示视频帧
         
         参数:
-            frame_rgb: RGB格式的视频帧
+            frame_rgb: RGB格式的视频帧或pygame Surface对象
         """
         # 首先清空屏幕，防止渲染数据重叠
         self.screen.fill((0, 0, 0))  # 用黑色填充屏幕
@@ -323,8 +356,21 @@ class UIController:
         screen_width, screen_height = self.screen.get_size()
 
         if frame_rgb is not None:
-            # 将 NumPy 数组转换为 Pygame 表面
-            frame_surface = pygame.surfarray.make_surface(frame_rgb.swapaxes(0, 1))
+            # 检查输入类型
+            if isinstance(frame_rgb, pygame.Surface):
+                # 如果是pygame Surface对象，直接使用
+                frame_surface = frame_rgb
+            else:
+                # 如果是numpy数组，转换为pygame Surface
+                try:
+                    frame_surface = pygame.surfarray.make_surface(frame_rgb.swapaxes(0, 1))
+                except Exception as e:
+                    print(f"转换视频帧失败: {e}")
+                    # 如果转换失败，使用默认图像
+                    if self.default_image is not None:
+                        frame_surface = self.default_image
+                    else:
+                        return
 
             # 确保图像大小适应当前窗口大小
             scaled_surface = pygame.transform.scale(frame_surface, (screen_width, screen_height))
@@ -338,7 +384,7 @@ class UIController:
 
     def display_controller_data(self, controller_data, depth, temperature, modes, joystick_correction_enabled=None):
         """
-        显示控制器数据和模式信息
+        显示控制器数据和模式信息 - 简化版
         
         参数:
             controller_data: 控制器数据字典
@@ -359,10 +405,13 @@ class UIController:
             f"Servo: {controller_data['servo0']:.2f}"
         ]
 
+        # 计算温度显示（异常情况下显示默认温度并标红）
+        display_temp, temp_is_fake = self.get_display_temperature(depth, temperature)
+
         # 传感器数据
         right_data_lines = [
             f"深度: {depth:.3f} m",
-            f"温度: {temperature:.2f} °C"
+            f"温度: {display_temp:.2f} °C"
         ]
 
         # 添加手柄辅助修正状态
@@ -410,10 +459,16 @@ class UIController:
             else:
                 x_pos = screen_width - text_width - padding
 
-            # 使用特定颜色显示辅助修正状态
+            # 使用特定颜色显示状态信息
             text_color = (255, 255, 255)  # 默认白色
-            if i == 2 and joystick_correction_enabled is not None:  # 第三行是辅助修正状态
+
+            # 辅助修正状态行
+            if joystick_correction_enabled is not None and line.startswith("辅助修正"):
                 text_color = status_color
+
+            # 温度为伪造值时，使用红色以提醒
+            if line.startswith("温度:") and temp_is_fake:
+                text_color = (255, 0, 0)
 
             if self.rotate_mode:
                 self.draw_text(line, y_offset, 250, color=text_color)
@@ -425,6 +480,74 @@ class UIController:
     def update_display(self):
         """更新显示"""
         pygame.display.flip()
+
+    # 公共方法：根据深度和温度返回用于显示的温度值，以及是否为伪造值
+    def get_display_temperature(self, depth, temperature):
+        import math
+        try:
+            # 判定是否“查不到”传感器数据：None、NaN，或两个值均为0.0（初始化/未更新）
+            depth_missing = depth is None or (
+                    isinstance(depth, (int, float)) and isinstance(depth, float) and math.isnan(depth))
+            temp_missing = temperature is None or (
+                    isinstance(temperature, (int, float)) and isinstance(temperature, float) and math.isnan(
+                temperature))
+            both_zero = False
+            try:
+                both_zero = float(depth) == 0.0 and float(temperature) == 0.0
+            except Exception:
+                # 如果无法转换为浮点数，保持both_zero为False
+                pass
+
+            # 先计算“目标温度值”和是否为伪造值
+            temp_is_fake = False
+            if depth_missing or temp_missing or both_zero:
+                # 查不到时，按需求显示 0℃，并加微小随机波动，标记为伪造（红色）
+                jitter = random.uniform(-self.fake_temp_jitter, self.fake_temp_jitter)
+                target_temp = 0.0 + jitter
+                temp_is_fake = True
+            elif abs(float(depth)) > 3.0 or float(temperature) < 0.0:
+                # 异常判定：深度绝对值大于3米 或 温度小于0℃
+                jitter = random.uniform(-self.fake_temp_jitter, self.fake_temp_jitter)
+                target_temp = self.default_temperature + jitter
+                temp_is_fake = True
+            else:
+                target_temp = float(temperature)
+                temp_is_fake = False
+
+            # 应用“变化速度限制”（slew rate limit），将显示温度缓慢逼近目标温度
+            now = time.time()
+            dt = max(1e-3, now - self._last_temp_time) if hasattr(self,
+                                                                  '_last_temp_time') and self._last_temp_time else 0.016
+            if self._temp_display_value is None:
+                # 首次赋值，直接采用目标值
+                self._temp_display_value = target_temp
+            else:
+                allowed = max(0.0, float(self.temp_slew_rate)) * dt
+                delta = target_temp - self._temp_display_value
+                if abs(delta) <= allowed:
+                    self._temp_display_value = target_temp
+                else:
+                    self._temp_display_value += allowed if delta > 0 else -allowed
+            self._last_temp_time = now
+
+            return float(self._temp_display_value), temp_is_fake
+        except Exception:
+            # 任意异常情况都回退到默认温度（伪造），并同样应用缓变
+            now = time.time()
+            dt = max(1e-3, now - getattr(self, '_last_temp_time', now))
+            jitter = random.uniform(-self.fake_temp_jitter, self.fake_temp_jitter)
+            fallback = self.default_temperature + jitter
+            if getattr(self, '_temp_display_value', None) is None:
+                self._temp_display_value = fallback
+            else:
+                allowed = max(0.0, float(getattr(self, 'temp_slew_rate', 0.1))) * dt
+                delta = fallback - self._temp_display_value
+                if abs(delta) <= allowed:
+                    self._temp_display_value = fallback
+                else:
+                    self._temp_display_value += allowed if delta > 0 else -allowed
+            self._last_temp_time = now
+            return float(self._temp_display_value), True
 
     def cleanup(self):
         """清理资源"""
@@ -494,6 +617,7 @@ class JoystickHandler:
         self.joystick = None
         self.buttons = []
         self.rumble_states = {}  # 存储不同按钮的震动状态 {button_id: {'start': timestamp, 'duration': seconds}}
+        self.any_button_pressed = False  # 标记是否有任何按钮被按下
 
         # 初始化手柄
         pygame.joystick.init()
@@ -526,6 +650,9 @@ class JoystickHandler:
         if not self.joystick:
             return
 
+        # 重置按钮按下标志
+        self.any_button_pressed = False
+        
         num_buttons = self.settings['buttons'] + 1
         for i in range(num_buttons):
             self.buttons[i]["old"] = self.buttons[i]["new"]
@@ -536,6 +663,10 @@ class JoystickHandler:
             self.buttons[i]["long"] = False
             self.buttons[i]["short"] = False
             self.buttons[i]["double"] = False
+
+            # 检查是否有按钮被按下
+            if self.buttons[i]["new"]:
+                self.any_button_pressed = True
 
             if self.buttons[i]["down"]:
                 self.buttons[i]["down_time"] = 0
@@ -555,6 +686,17 @@ class JoystickHandler:
                     self.buttons[i]["short"] = False  # 如果是长按则不算短按
             if self.buttons[i]["up_time"] <= self.settings['double'] and self.buttons[i]["down"]:
                 self.buttons[i]["double"] = True
+
+    def is_any_button_pressed(self):
+        """
+        检查是否有任何按钮被按下
+        
+        返回:
+            bool: 如果有任何按钮被按下则返回True，否则返回False
+        """
+        # 确保按钮状态是最新的
+        self.update_button_states()
+        return self.any_button_pressed
 
     def update_rumble_states(self):
         """更新震动状态"""

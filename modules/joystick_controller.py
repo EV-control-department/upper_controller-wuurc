@@ -127,7 +127,10 @@ class JoystickController:
 
     def process_speed_mode(self):
         """处理速度模式切换（左扳机）"""
-        left_trigger_threshold = self.thresholds["left_trigger_threshold"]
+        # 使用当前抓取模式的左扳机阈值
+        current_mode = self.catch_modes[self.catch_mode_ptr]
+        left_trigger_threshold = current_mode.get("left_threshold", self.thresholds["left_trigger_threshold"])
+        
         if self.joystick_handler.get_axis(4) > left_trigger_threshold and self.pre_speed_mode_ptr == 0:
             self.pre_speed_mode_ptr = self.speed_mode_ptr
             self.speed_mode_ptr = 0
@@ -142,6 +145,17 @@ class JoystickController:
         y_axis = self.config_manager.get_axis_config("y")
         x_axis = self.config_manager.get_axis_config("x")
         z_axis = self.config_manager.get_axis_config("z")
+
+        # 获取当前抓取模式的参数
+        current_mode = self.catch_modes[self.catch_mode_ptr]
+        x_max = current_mode.get("x_max", x_axis["max"])
+        y_max = current_mode.get("y_max", y_axis["max"])
+        z_max = current_mode.get("z_max", z_axis["max"])
+        # 获取z轴最小值（负向限制）
+        z_min = current_mode.get("z_min", z_axis.get("min", -z_max))
+        x_reduction = current_mode.get("x_reduction", 4)
+        y_reduction = current_mode.get("y_reduction", 8)
+        z_reduction = current_mode.get("z_reduction", 8)
 
         # 获取原始轴值
         raw_yaw = self.joystick_handler.get_axis(yaw_axis["axis"])
@@ -168,33 +182,43 @@ class JoystickController:
         # 处理控制器输入 - Y轴（前后）
         if abs(corrected_y) >= y_axis["deadzone"]:
             self.controller_monitor.controller["y"] = (
-                                                              y_axis["max"] *
+                                                              y_max *
                                                               self.speed_modes[self.speed_mode_ptr]["rate"]
                                                       ) * controller_curve(
                 corrected_y
-            ) * (1 - (self.joystick_handler.get_axis(4) + 1) / 8)
+            ) * (1 - (self.joystick_handler.get_axis(4) + 1) / y_reduction)
         else:
             self.controller_monitor.controller["y"] = 0.0
 
         # 处理控制器输入 - X轴（左右）
         if abs(corrected_x) >= x_axis["deadzone"]:
             self.controller_monitor.controller["x"] = (
-                                                              x_axis["max"] *
+                                                              x_max *
                                                               self.speed_modes[self.speed_mode_ptr]["rate"]
                                                       ) * controller_curve(
                 corrected_x
-            ) * (1 - (self.joystick_handler.get_axis(4) + 1) / 4)
+            ) * (1 - (self.joystick_handler.get_axis(4) + 1) / x_reduction)
         else:
             self.controller_monitor.controller["x"] = 0.0
 
         # 处理控制器输入 - Z轴（上下）
         if abs(corrected_z) >= z_axis["deadzone"] and not self.pid_state:
+            # 根据z轴方向选择使用z_max（正向）或z_min（负向）
+            z_limit = z_max if corrected_z >= 0 else z_min
+
+            # 计算z轴输入的符号和绝对值
+            z_sign = 1 if corrected_z >= 0 else -1
+            z_abs = abs(corrected_z)
+
+            # 应用controller_curve函数，保持输入的符号
+            curved_input = z_sign * controller_curve(z_abs)
+
+            # 计算最终输出值，确保与各自的限制成比例
             self.controller_monitor.controller["z"] = (
-                                                              z_axis["max"] *
+                                                              abs(z_limit) *
                                                               self.speed_modes[self.speed_mode_ptr]["rate"]
-                                                      ) * controller_curve(
-                corrected_z
-            ) * (1 - (self.joystick_handler.get_axis(4) + 1) / 8)
+                                                      ) * curved_input * (1 - (
+                    self.joystick_handler.get_axis(4) + 1) / z_reduction)
         else:
             self.controller_monitor.controller["z"] = 0.0
 
@@ -280,8 +304,18 @@ class JoystickController:
             self.toggle_joystick_correction()
             self.joystick_handler.start_rumble(8)  # 提供震动反馈
 
-        # 处理轴输入
-        self.process_axes()
+        # 处理A按钮快速上浮（按钮0）
+        # 当按下A按钮时，ROV会以最大速度10000快速上浮，覆盖正常的摇杆控制
+        # 这个功能用于紧急情况下需要快速上升到水面
+        # 使用"new"状态而不是"down"状态，确保只要按钮被按住就持续上浮
+        if self.joystick_handler.buttons[0]["new"]:
+            self.controller_monitor.controller["z"] = -10000  # 负值表示上浮
+            # 只在按钮刚被按下时提供震动反馈
+            if self.joystick_handler.buttons[0]["down"]:
+                self.joystick_handler.start_rumble(0)  # 提供震动反馈
+        else:
+            # 处理轴输入
+            self.process_axes()
 
         # 处理舵机控制
         self.process_servo_controls()

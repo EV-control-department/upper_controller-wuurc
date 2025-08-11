@@ -15,6 +15,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QComboBox, QPushButton, QLabel, QLineEdit, QGridLayout, QGroupBox,
                              QMessageBox, QFileDialog, QSlider, QListWidget, QListWidgetItem,
                              QSplitter, QSizePolicy)
+from matplotlib import text
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
@@ -573,11 +574,12 @@ class ThrustVisualization(FigureCanvas):
     def _setup_motor_positions(self):
         """设置电机位置"""
         # 6个电机的布局: 4个水平电机形成菱形布局用于X/Y/Yaw, 2个垂直电机用于Z
+        # 水平电机呈45°角放置，形成一个菱形，推水线围成棱形
         self.motor_positions = {
-            'm0': [0.8, 1, 0],  # 右前 (45度角)
-            'm1': [0.8, -1, 0],  # 右后 (45度角)
-            'm2': [-0.8, -1, 0],  # 左后 (45度角)
-            'm3': [-0.8, 1, 0],  # 左前 (45度角)
+            'm0': [0.7, 0.7, 0],  # 右前 (45度角)
+            'm1': [0.7, -0.7, 0],  # 右后 (315度角)
+            'm2': [-0.7, -0.7, 0],  # 左后 (225度角)
+            'm3': [-0.7, 0.7, 0],  # 左前 (135度角)
             'm4': [0, 0.5, 0.3],  # 上前
             'm5': [0, -0.5, 0.3]  # 上后
         }
@@ -598,15 +600,15 @@ class ThrustVisualization(FigureCanvas):
 
             # 创建电机圆柱体
             if motor in ['m0', 'm1', 'm2', 'm3']:  # 水平电机
-                # 水平电机的方向取决于其位置
-                if motor == 'm0':  # 右前
-                    direction = np.array([1, 1, 0]) / np.sqrt(2)
-                elif motor == 'm1':  # 右后
-                    direction = np.array([1, -1, 0]) / np.sqrt(2)
-                elif motor == 'm2':  # 左后
-                    direction = np.array([-1, -1, 0]) / np.sqrt(2)
-                elif motor == 'm3':  # 左前
-                    direction = np.array([-1, 1, 0]) / np.sqrt(2)
+                # 水平电机的方向取决于其位置 - 前后对称布局
+                if motor == 'm0':  # 右前 - 推水线指向前方中心
+                    direction = np.array([-0.5, 1, 0]) / np.sqrt(1.25)
+                elif motor == 'm1':  # 右后 - 推水线指向后方中心
+                    direction = np.array([0.5, -1, 0]) / np.sqrt(1.25)
+                elif motor == 'm2':  # 左后 - 推水线指向后方中心
+                    direction = np.array([-0.5, -1, 0]) / np.sqrt(1.25)
+                elif motor == 'm3':  # 左前 - 推水线指向前方中心
+                    direction = np.array([0.5, 1, 0]) / np.sqrt(1.25)
 
                 # 创建电机圆柱体的端点
                 end_point = np.array(pos) + direction * motor_length
@@ -751,14 +753,14 @@ class ThrustVisualization(FigureCanvas):
 
     def _get_motor_direction(self, motor):
         """获取电机的方向向量"""
-        if motor == 'm0':  # 右前
-            return np.array([1, 1, 0]) / np.sqrt(2)
-        elif motor == 'm1':  # 右后
-            return np.array([1, -1, 0]) / np.sqrt(2)
-        elif motor == 'm2':  # 左后
-            return np.array([-1, -1, 0]) / np.sqrt(2)
-        elif motor == 'm3':  # 左前
-            return np.array([-1, 1, 0]) / np.sqrt(2)
+        if motor == 'm0':  # 右前 - 推水线指向前方中心
+            return np.array([-0.5, 1, 0]) / np.sqrt(1.25)
+        elif motor == 'm1':  # 右后 - 推水线指向后方中心
+            return np.array([0.5, -1, 0]) / np.sqrt(1.25)
+        elif motor == 'm2':  # 左后 - 推水线指向后方中心
+            return np.array([-0.5, -1, 0]) / np.sqrt(1.25)
+        elif motor == 'm3':  # 左前 - 推水线指向前方中心
+            return np.array([0.5, 1, 0]) / np.sqrt(1.25)
         else:  # 垂直电机
             return np.array([0, 0, 1])
 
@@ -766,7 +768,7 @@ class ThrustVisualization(FigureCanvas):
         """在图表上显示当前推力值"""
         # 移除之前的文本
         for arrow in self.thrust_arrows:
-            if isinstance(arrow, text.Text):
+            if isinstance(arrow, matplotlib.text.Text):
                 if arrow.get_position()[0] < -1.5 or arrow.get_position()[0] > 1.5:
                     arrow.remove()
 
@@ -825,23 +827,53 @@ class ThrustVisualization(FigureCanvas):
     def calculate_motor_thrusts(self, x, y, z, yaw):
         """计算每个电机的推力值
         
-        这是一个简化的模型，实际ROV的推力分配可能更复杂
+        基于前后对称布局的推力分配模型，四个水平电机的推水线分别指向前后中心
+        前面两个电机(m0,m3)的推水线相交于机器人前侧，后面两个电机(m1,m2)的推水线相交于机器人后侧
         """
-        # 简化的推力分配模型
+        # 前后对称布局的推力分配模型
+        # 使用向量投影原理计算每个电机的推力
+
+        # 计算每个电机方向向量的分量
+        # m0: [-0.5, 1, 0]/sqrt(1.25)
+        # m1: [0.5, -1, 0]/sqrt(1.25)
+        # m2: [-0.5, -1, 0]/sqrt(1.25)
+        # m3: [0.5, 1, 0]/sqrt(1.25)
+
+        # 归一化系数
+        norm_factor = np.sqrt(1.25)
+
+        # x分量系数
+        x_coef_m0 = -0.5 / norm_factor
+        x_coef_m1 = 0.5 / norm_factor
+        x_coef_m2 = -0.5 / norm_factor
+        x_coef_m3 = 0.5 / norm_factor
+
+        # y分量系数
+        y_coef_m0 = 1.0 / norm_factor
+        y_coef_m1 = -1.0 / norm_factor
+        y_coef_m2 = -1.0 / norm_factor
+        y_coef_m3 = 1.0 / norm_factor
+        
         motor_thrusts = {
-            'm0': x + yaw,  # 右前
-            'm1': x - yaw,  # 右后
-            'm2': -x - yaw,  # 左后
-            'm3': -x + yaw,  # 左前
-            'm4': z,  # 上前
-            'm5': z  # 上后
+            # 右前 - 推水线指向前方中心
+            'm0': x * x_coef_m0 + y * y_coef_m0,
+            # 右后 - 推水线指向后方中心
+            'm1': x * x_coef_m1 + y * y_coef_m1,
+            # 左后 - 推水线指向后方中心
+            'm2': x * x_coef_m2 + y * y_coef_m2,
+            # 左前 - 推水线指向前方中心
+            'm3': x * x_coef_m3 + y * y_coef_m3,
+            # 垂直电机控制Z轴
+            'm4': z,
+            'm5': z
         }
 
-        # 添加Y方向的影响 (前后)
-        motor_thrusts['m0'] += y
-        motor_thrusts['m3'] += y
-        motor_thrusts['m1'] -= y
-        motor_thrusts['m2'] -= y
+        # 添加偏航(Yaw)的影响 - 所有水平电机都参与偏航控制
+        # 顺时针旋转：m0和m2推力增加，m1和m3推力减少
+        motor_thrusts['m0'] += yaw
+        motor_thrusts['m2'] += yaw
+        motor_thrusts['m1'] -= yaw
+        motor_thrusts['m3'] -= yaw
 
         return motor_thrusts
 

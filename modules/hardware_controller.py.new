@@ -23,7 +23,7 @@ class HardwareController:
         self.server_address = server_address
         self.motor_params = motor_params
         self.client_socket = None
-
+        
         # 初始化电机状态字典，用于跟踪每个电机的初始化状态
         self.motor_init_status = {
             "m0": False,
@@ -54,11 +54,11 @@ class HardwareController:
         if motor_name not in self.motor_params:
             print(f"错误: 未找到电机参数 {motor_name}")
             return False
-
+            
         if not self.client_socket:
             print("错误: 套接字未初始化")
             return False
-
+            
         try:
             data = {
                 "cmd": "thrust_init",
@@ -95,7 +95,7 @@ class HardwareController:
             if not status:
                 failed_motors.append(motor_name)
         return failed_motors
-
+    
     def all_motors_initialized(self):
         """
         检查所有电机是否都已成功初始化
@@ -104,7 +104,7 @@ class HardwareController:
             bool: 如果所有电机都已初始化则返回True，否则返回False
         """
         return all(self.motor_init_status.values())
-
+    
     def retry_failed_motors(self):
         """
         重试初始化失败的电机
@@ -114,25 +114,25 @@ class HardwareController:
         """
         failed_motors = self.get_failed_motors()
         still_failed = []
-
+        
         # 优先重试主电机（m0-m3）
         main_motors = [m for m in failed_motors if m in ["m0", "m1", "m2", "m3"]]
         other_motors = [m for m in failed_motors if m in ["m4", "m5"]]
-
+        
         # 重试主电机
         for motor_name in main_motors:
             success = self.send_thrust_data(motor_name)
             if not success:
                 still_failed.append(motor_name)
             time.sleep(0.1)
-
+        
         # 重试其他电机
         for motor_name in other_motors:
             success = self.send_thrust_data(motor_name)
             if not success:
                 still_failed.append(motor_name)
             time.sleep(0.05)
-
+        
         return still_failed
 
     def hwinit(self, max_retries=3):
@@ -156,30 +156,30 @@ class HardwareController:
         
         for motor_name in ["m0", "m1", "m2", "m3", "m4", "m5"]:
             motor_success = False
-
+            
             # 尝试发送电机参数，最多重试max_retries次
             for attempt in range(max_retries + 1):
                 success = self.send_thrust_data(motor_name)
                 if success:
                     motor_success = True
                     break
-
+                    
                 if attempt < max_retries:
                     # 指数退避重试
                     wait_time = 0.1 * (2 ** attempt)
-                    print(f"初始化电机 {motor_name} 失败，{wait_time:.2f}秒后重试 ({attempt + 1}/{max_retries})")
+                    print(f"初始化电机 {motor_name} 失败，{wait_time:.2f}秒后重试 ({attempt+1}/{max_retries})")
                     time.sleep(wait_time)
                 else:
                     print(f"初始化电机 {motor_name} 失败，已达到最大重试次数")
-
+            
             if motor_success:
                 print(f"电机 {motor_name} 初始化成功")
             else:
                 all_success = False
-
+                
             # 电机初始化之间的延迟
             time.sleep(0.1)
-
+            
         return self.all_motors_initialized()
 
     def send_controller_data(self, controller_data):
@@ -195,7 +195,7 @@ class HardwareController:
         if not self.client_socket:
             print("错误: 套接字未初始化")
             return False
-
+            
         try:
             msg = json.dumps(controller_data)
             self.client_socket.sendto((msg + '\n').encode(), self.server_address)
@@ -228,21 +228,19 @@ class HardwareController:
                         # 记录JSON解析错误但不中断程序
                         # 限制错误消息频率，避免日志被刷屏
                         current_time = time.time()
-                        if not hasattr(self,
-                                       '_last_json_error_time') or current_time - self._last_json_error_time > 5.0:
+                        if not hasattr(self, '_last_json_error_time') or current_time - self._last_json_error_time > 5.0:
                             print(f"JSON解析错误: {str(e)}, 数据: {stripped_data[:50]}...")
                             self._last_json_error_time = current_time
-
+                        
                         # 返回一个最小的有效数据结构，避免调用者需要处理None
                         return {"depth": 0.0, "temperature": 0.0, "_error": "json_decode"}
                 except UnicodeDecodeError as e:
                     # 处理解码错误，同样限制错误消息频率
                     current_time = time.time()
-                    if not hasattr(self,
-                                   '_last_decode_error_time') or current_time - self._last_decode_error_time > 5.0:
+                    if not hasattr(self, '_last_decode_error_time') or current_time - self._last_decode_error_time > 5.0:
                         print(f"数据解码错误: {str(e)}")
                         self._last_decode_error_time = current_time
-
+                    
                     # 返回最小有效数据结构
                     return {"depth": 0.0, "temperature": 0.0, "_error": "unicode_decode"}
         except BlockingIOError:
@@ -308,13 +306,13 @@ class NetworkWorker(threading.Thread):
         self.task_in_progress = False
         self.task_event = threading.Event()
         self.running = True
-
+        
         # 连接状态跟踪
         self.connection_status = True
         self.last_successful_comm = time.time()
         self.comm_failures = 0
         self.max_retries = 3
-
+        
         # 心跳和电机重初始化计时器
         self.last_heartbeat = time.time()
         self.heartbeat_interval = 2.0  # 心跳间隔（秒）
@@ -335,9 +333,9 @@ class NetworkWorker(threading.Thread):
             if current_time - self.last_heartbeat >= self.heartbeat_interval:
                 self.send_heartbeat()
                 self.last_heartbeat = current_time
-
+            
             # 注意：根据需求，推力曲线只在初始化时发送，运行过程中不再定期发送
-
+            
             self.task_event.wait(timeout=0.5)  # 等待被设置，但最多等待0.5秒
             self.task_event.clear()  # 重置事件，避免重复处理
 
@@ -349,9 +347,9 @@ class NetworkWorker(threading.Thread):
 
             try:
                 # 发送控制器数据
-                success = self.send_with_retry(self.hardware_controller.send_controller_data,
-                                               self.controller_monitor.controller)
-
+                success = self.send_with_retry(self.hardware_controller.send_controller_data, 
+                                              self.controller_monitor.controller)
+                
                 if success:
                     # 更新最后成功通信时间
                     self.last_successful_comm = time.time()
@@ -359,7 +357,7 @@ class NetworkWorker(threading.Thread):
                     if not self.connection_status:
                         print("电调连接已恢复")
                         self.connection_status = True
-
+                
                 # 接收传感器数据 - JSON错误在receive_sensor_data内部处理
                 sensor_data = self.hardware_controller.receive_sensor_data()
                 if sensor_data:
@@ -367,7 +365,7 @@ class NetworkWorker(threading.Thread):
             except Exception as e:
                 self.comm_failures += 1
                 print(f"网络通信错误: {str(e)}")
-
+                
                 # 如果连续失败次数过多，标记连接状态为断开
                 if self.comm_failures > 5 and self.connection_status:
                     self.connection_status = False
@@ -390,7 +388,7 @@ class NetworkWorker(threading.Thread):
         """
         if retries is None:
             retries = self.max_retries
-
+            
         for attempt in range(retries + 1):
             try:
                 send_func(data)
@@ -399,24 +397,24 @@ class NetworkWorker(threading.Thread):
                 if attempt < retries:
                     # 指数退避重试
                     wait_time = 0.1 * (2 ** attempt)
-                    print(f"发送失败，{wait_time:.2f}秒后重试 ({attempt + 1}/{retries}): {str(e)}")
+                    print(f"发送失败，{wait_time:.2f}秒后重试 ({attempt+1}/{retries}): {str(e)}")
                     time.sleep(wait_time)
                 else:
                     print(f"发送失败，已达到最大重试次数: {str(e)}")
                     return False
-
+    
     def send_heartbeat(self):
         """发送心跳包以保持连接"""
         try:
             # 创建一个简单的心跳包
             heartbeat_data = {"cmd": "heartbeat", "timestamp": time.time()}
             self.hardware_controller.client_socket.sendto(
-                (json.dumps(heartbeat_data) + '\n').encode(),
+                (json.dumps(heartbeat_data) + '\n').encode(), 
                 self.hardware_controller.server_address
             )
         except Exception as e:
             print(f"发送心跳包失败: {str(e)}")
-
+    
     def reinitialize_motors(self):
         """
         重新初始化电机
@@ -440,7 +438,7 @@ class NetworkWorker(threading.Thread):
         """
         print("手动发送推力曲线数据...")
         success_count = 0
-
+        
         # 为每个电机单独发送推力曲线，并单独处理错误
         for motor_name in ["m0", "m1", "m2", "m3", "m4", "m5"]:
             try:
@@ -450,7 +448,7 @@ class NetworkWorker(threading.Thread):
                 time.sleep(0.05)
             except Exception as e:
                 print(f"发送电机 {motor_name} 推力曲线失败: {str(e)}")
-
+        
         print(f"推力曲线发送完成: {success_count}/6 个电机成功")
         return success_count > 0
 

@@ -1,138 +1,181 @@
-# 推力曲线调试器更新文档
+# 推力曲线调试器 (Thrust Curve Debugger) 更新文档
 
-## 更新内容概述
+## 更新概述
 
-本次更新解决了推力曲线调试器 (`thrust_curve_debugger.py`) 中的以下问题：
+根据需求，我们对 `thrust_curve_debugger.py` 进行了重构，将水平电机的布局从辐射状发散改为前后对称布局，并重新计算了 X、Y、Z
+轴的推力矩阵。这些更改使得前面两个电机的推水线相交于机器人前侧，后面两个电机的推水线相交于机器人后侧，从而提高了推进效率和控制精度。
 
-1. 在双曲线视图模式下，确保只有当前正在编辑的电机曲线可以被拖动，另一个电机曲线不可拖动
-2. 实现了电机选择队列机制，解决了选择三个以上电机按钮的情况
-3. 增强了UI反馈，使用户更容易识别当前正在编辑的电机
+## 具体更改
 
-## 详细更改
+### 1. 电机位置布局
 
-### 1. 防止非编辑电机的点被拖动
+**原始布局**：
 
-修改了 `DraggablePointPlot` 类的 `on_press` 方法，添加了检查逻辑，确保在双曲线视图模式下，只有当前正在编辑的电机的点可以被拖动：
+- 四个水平电机呈辐射状布局，分别位于 0°、90°、180°、270° 角度
+- 电机位置：
+  - m0: [1, 0, 0] - 右侧 (0度角)
+  - m1: [0, -1, 0] - 后侧 (270度角)
+  - m2: [-1, 0, 0] - 左侧 (180度角)
+  - m3: [0, 1, 0] - 前侧 (90度角)
 
+**新布局**：
+
+- 四个水平电机呈菱形布局，分别位于 45°、135°、225°、315° 角度
+- 电机位置：
+  - m0: [0.7, 0.7, 0] - 右前 (45度角)
+  - m1: [0.7, -0.7, 0] - 右后 (315度角)
+  - m2: [-0.7, -0.7, 0] - 左后 (225度角)
+  - m3: [-0.7, 0.7, 0] - 左前 (135度角)
+
+### 2. 电机方向更新
+
+**原始方向**：
+
+- m0: [1, 0, 0] - 沿 X 轴正方向
+- m1: [0, -1, 0] - 沿 Y 轴负方向
+- m2: [-1, 0, 0] - 沿 X 轴负方向
+- m3: [0, 1, 0] - 沿 Y 轴正方向
+
+**中间方向**（菱形布局）：
+
+- m0: [1, 1, 0]/√2 - 45° 方向
+- m1: [1, -1, 0]/√2 - 315° 方向
+- m2: [-1, -1, 0]/√2 - 225° 方向
+- m3: [-1, 1, 0]/√2 - 135° 方向
+
+**最终方向**（前后对称布局）：
+
+- m0: [-0.5, 1, 0]/√1.25 - 右前，推水线指向前方中心
+- m1: [0.5, -1, 0]/√1.25 - 右后，推水线指向后方中心
+- m2: [-0.5, -1, 0]/√1.25 - 左后，推水线指向后方中心
+- m3: [0.5, 1, 0]/√1.25 - 左前，推水线指向前方中心
+
+### 3. 推力计算矩阵重构
+
+**原始推力计算**：
 ```python
-def on_press(self, event):
-    if event.inaxes != self.axes: return
-    for artist in self.points_artists:
-        contains, _ = artist.contains(event)
-        if contains:
-            name = artist.get_gid()
+motor_thrusts = {
+    'm0': x,         # 右侧 - 控制X轴正向
+    'm1': -y,        # 后侧 - 控制Y轴负向
+    'm2': -x,        # 左侧 - 控制X轴负向
+    'm3': y,         # 前侧 - 控制Y轴正向
+    'm4': z,         # 上前 - 控制Z轴
+    'm5': z          # 上后 - 控制Z轴
+}
 
-            # 检查是否是比较曲线的点
-            is_comparison_point = name.endswith('_comp')
-
-            # 在双曲线视图模式下，只允许拖动当前正在编辑的电机的点
-            if self.is_dual_view:
-                if (is_comparison_point and self.editing_primary_motor) or
-                        (not is_comparison_point and not self.editing_primary_motor):
-                    # 不允许拖动非编辑电机的点
-                    return
-
-            self._drag_point_info = (artist, name)
-            self.point_selected.emit(name);
-            return
+# 添加偏航(Yaw)的影响
+motor_thrusts['m0'] += yaw
+motor_thrusts['m1'] += yaw
+motor_thrusts['m2'] -= yaw
+motor_thrusts['m3'] -= yaw
 ```
 
-### 2. 实现电机选择队列机制
-
-添加了电机选择队列属性，并修改了 `on_motor_button_clicked` 方法，实现了队列机制：
-
-1. 添加了 `motor_selection_queue` 属性，用于存储选中的电机队列
-2. 修改了 `on_motor_button_clicked` 方法，实现了以下逻辑：
-    - 当选择新电机时，将其添加到队列中
-    - 如果队列超过2个电机，移除最早的一个（不是当前主电机）
-    - 更新UI以反映队列变化
-
+**中间推力计算**（菱形布局）：
 ```python
-# 在MainWindow类的__init__方法中添加队列属性
-# self.motor_selection_queue = []  # 用于存储选中的电机队列，最多保留两个
+# 系数0.7071约等于1/sqrt(2)，用于45°角的分量分解
+coef = 0.7071
 
-# 在on_motor_button_clicked方法中实现队列管理逻辑
-# 当选择新电机时，将其添加到队列
-# if motor_name not in self.motor_selection_queue:
-#     self.motor_selection_queue.append(motor_name)
+motor_thrusts = {
+    # 右前 (45°) - 贡献x正向和y正向
+    'm0': x * coef + y * coef,
+    # 右后 (315°) - 贡献x正向和y负向
+    'm1': x * coef - y * coef,
+    # 左后 (225°) - 贡献x负向和y负向
+    'm2': -x * coef - y * coef,
+    # 左前 (135°) - 贡献x负向和y正向
+    'm3': -x * coef + y * coef,
+    # 垂直电机控制Z轴
+    'm4': z,
+    'm5': z
+}
 
-# 如果队列超过2个，移除最早的一个（不是当前主电机）
-# if len(self.motor_selection_queue) > 2:
-#     # 找到要移除的电机（不是当前选中的电机）
-#     to_remove = None
-#     for m in self.motor_selection_queue:
-#         if m != motor_name and m != self.current_motor:
-#             to_remove = m
-#             break
-
-#     # 如果没有找到可移除的，移除最早的一个
-#     if to_remove is None and len(self.motor_selection_queue) > 0:
-#         to_remove = self.motor_selection_queue[0]
-
-#     # 移除电机并更新UI
-#     if to_remove is not None:
-#         self.motor_selection_queue.remove(to_remove)
-#         self.motor_buttons[to_remove].setChecked(False)
-#         self.motor_buttons[to_remove].setStyleSheet("")
-
-#         # 如果移除的是比较电机，清除比较电机
-#         if to_remove == self.comparison_motor:
-#             self.comparison_motor = None
+# 添加偏航(Yaw)的影响 - 所有水平电机都参与偏航控制
+# 顺时针旋转：m0和m2推力增加，m1和m3推力减少
+motor_thrusts['m0'] += yaw
+motor_thrusts['m2'] += yaw
+motor_thrusts['m1'] -= yaw
+motor_thrusts['m3'] -= yaw
 ```
 
-队列管理的主要逻辑：
-
-1. 维护一个最多包含两个电机的队列
-2. 当选择新电机时，将其添加到队列
-3. 如果队列超过2个，移除最早的非主电机
-4. 更新UI以反映队列变化
-
-### 3. 增强UI反馈
-
-修改了 `_update_editing_motor_ui` 方法，增强了视觉反馈，使用户更容易识别当前正在编辑的电机：
-
+**最终推力计算**（前后对称布局）：
 ```python
-# 修改_update_editing_motor_ui方法以增强视觉反馈
-# def _update_editing_motor_ui(self):
-#     """更新UI以显示当前正在编辑的电机"""
-#     if self.editing_primary_motor:
-#         # 编辑主电机时的样式
-#         self.curve_params_group.setStyleSheet("QGroupBox { font-weight: bold; background-color: #f0f0ff; }")
-#         self.comparison_params_group.setStyleSheet("QGroupBox { font-weight: bold; color: #0066cc; }")
-#         self.switch_motor_btn.setText(f"当前编辑: {self.current_motor} (点击切换)")
-#         
-#         # 更新按钮样式，主电机使用实线边框
-#         self.motor_buttons[self.current_motor].setStyleSheet("background-color: #AED6F1; border: 2px solid #2980B9;")
-#         self.motor_buttons[self.comparison_motor].setStyleSheet("background-color: #D6E9F1; border: 1px dashed #5DADE2;")
-#     else:
-#         # 编辑比较电机时的样式
-#         self.curve_params_group.setStyleSheet("QGroupBox { font-weight: bold; }")
-#         self.comparison_params_group.setStyleSheet("QGroupBox { font-weight: bold; color: #0066cc; background-color: #f0f0ff; }")
-#         self.switch_motor_btn.setText(f"当前编辑: {self.comparison_motor} (点击切换)")
-#         
-#         # 更新按钮样式，比较电机使用实线边框
-#         self.motor_buttons[self.current_motor].setStyleSheet("background-color: #AED6F1; border: 1px dashed #2980B9;")
-#         self.motor_buttons[self.comparison_motor].setStyleSheet("background-color: #D6E9F1; border: 2px solid #5DADE2;")
+# 归一化系数
+norm_factor = np.sqrt(1.25)
+
+# x分量系数
+x_coef_m0 = -0.5 / norm_factor
+x_coef_m1 = 0.5 / norm_factor
+x_coef_m2 = -0.5 / norm_factor
+x_coef_m3 = 0.5 / norm_factor
+
+# y分量系数
+y_coef_m0 = 1.0 / norm_factor
+y_coef_m1 = -1.0 / norm_factor
+y_coef_m2 = -1.0 / norm_factor
+y_coef_m3 = 1.0 / norm_factor
+
+motor_thrusts = {
+    # 右前 - 推水线指向前方中心
+    'm0': x * x_coef_m0 + y * y_coef_m0,
+    # 右后 - 推水线指向后方中心
+    'm1': x * x_coef_m1 + y * y_coef_m1,
+    # 左后 - 推水线指向后方中心
+    'm2': x * x_coef_m2 + y * y_coef_m2,
+    # 左前 - 推水线指向前方中心
+    'm3': x * x_coef_m3 + y * y_coef_m3,
+    # 垂直电机控制Z轴
+    'm4': z,
+    'm5': z
+}
+
+# 添加偏航(Yaw)的影响 - 所有水平电机都参与偏航控制
+# 顺时针旋转：m0和m2推力增加，m1和m3推力减少
+motor_thrusts['m0'] += yaw
+motor_thrusts['m2'] += yaw
+motor_thrusts['m1'] -= yaw
+motor_thrusts['m3'] -= yaw
 ```
 
-UI增强的主要改进：
+## 技术原理
 
-1. 当前正在编辑的电机按钮使用实线边框高亮显示
-2. 非编辑状态的电机按钮使用虚线边框显示
-3. 参数输入区域的背景色也会相应变化，以指示当前正在编辑的是哪个电机的参数
+### 前后对称布局设计
 
-## 使用说明
+在最终的前后对称布局中，我们采用了一种特殊的电机方向设计：
 
-1. **电机选择**：
-    - 在"电机选择与操作"区域中，最多可以同时选择两个电机
-    - 如果尝试选择第三个电机，系统会自动取消选择最早选择的非主电机
+1. 前部两个电机(m0和m3)的推水线相交于机器人前侧中心点
+2. 后部两个电机(m1和m2)的推水线相交于机器人后侧中心点
+3. 这种设计使得机器人在前进和后退时能够获得更集中的推力
 
-2. **双曲线视图**：
-    - 在双曲线视图模式下，实线表示当前正在编辑的电机曲线，虚线表示比较电机曲线
-    - 只有当前正在编辑的电机曲线可以被拖动修改
-    - 可以通过"当前编辑: XX (点击切换)"按钮切换当前正在编辑的电机
+### 向量投影原理
 
-3. **视觉反馈**：
-    - 当前正在编辑的电机按钮使用实线边框高亮显示
-    - 非编辑状态的电机按钮使用虚线边框显示
-    - 参数输入区域的背景色也会相应变化，以指示当前正在编辑的是哪个电机的参数
+我们使用向量投影原理将 X 和 Y 方向的推力分解到各个电机的方向上：
+
+1. 对于前后对称布局，每个电机的方向向量都经过精确计算，使其推水线指向前部或后部中心
+2. 每个电机的方向向量被归一化（除以√1.25），确保单位长度
+3. X和Y分量根据电机的具体方向进行正负调整
+4. 将分解后的分量相加得到该电机的总推力
+
+### 偏航控制优化
+
+在新的布局中，偏航控制也进行了优化：
+
+- 顺时针旋转：m0(右前)和m2(左后)推力增加，m1(右后)和m3(左前)推力减少
+- 逆时针旋转：m0(右前)和m2(左后)推力减少，m1(右后)和m3(左前)推力增加
+
+这种配置可以产生更平衡的偏航力矩，提高旋转控制的精度。
+
+## 优势
+
+1. **提高前进/后退效率**：前后对称布局使得前进和后退时推力更加集中，提高了推进效率
+2. **改善方向控制**：前部两个电机推水线相交于前方，后部两个电机推水线相交于后方，使得转向更加精确
+3. **减少推力损失**：推水线的交汇设计减少了推力的相互抵消，提高了能源利用效率
+4. **增强稳定性**：前后对称的推力分布使得机器人在运动中更加稳定
+5. **优化偏航控制**：新的偏航控制策略提供了更平衡的旋转力矩
+
+## 后续建议
+
+1. 进行实际测试，验证前后对称布局的性能表现，特别是前进/后退效率
+2. 根据测试结果微调推力系数和电机方向角度
+3. 考虑在实际硬件控制器中应用相同的推力计算矩阵
+4. 评估不同速度下的推力效率，可能需要针对高速和低速场景优化参数
+5. 考虑添加可视化工具，实时显示推水线的交汇点，以便更直观地调整和优化

@@ -125,11 +125,17 @@ class ConfigManager:
         if axis_name not in ["x", "y", "z", "yaw"]:
             raise ValueError(f"未知的轴名称: {axis_name}")
 
-        return {
+        config_dict = {
             "max": self.config[axis_name].getfloat("max"),
             "axis": self.config[axis_name].getint("axis"),
             "deadzone": self.config[axis_name].getfloat("deadzone")
         }
+
+        # 如果存在min参数，则添加到配置中
+        if "min" in self.config[axis_name]:
+            config_dict["min"] = self.config[axis_name].getfloat("min")
+
+        return config_dict
 
     def get_speed_modes(self):
         """获取速度模式配置"""
@@ -157,12 +163,106 @@ class ConfigManager:
 
     def get_catch_modes(self):
         """获取抓取模式配置"""
-        return [
-            {"name": "1.海螺捕捞", "servoX": 0.85, "servoY": 0.79, "color": "#e800b6"},
-            {"name": "2.精确作业", "servoX": 0.99, "servoY": 0.79, "color": "#00d5e8"},
-            {"name": "3.回收网箱", "servoX": 0.80, "servoY": 0.76, "color": "#8fe800"},
-            {"name": "4.饲料投放", "servoX": 0.74, "servoY": 0.79, "color": "#e86800"}
-        ]
+        modes = []
+        modes_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config", "modes")
+
+        # 检查模式目录是否存在
+        if not os.path.exists(modes_dir):
+            print(f"警告: 模式目录不存在: {modes_dir}，使用默认值")
+            return [
+                {"name": "1.海螺捕捞", "servoX": 0.85, "servoY": 0.79, "color": "#e800b6"},
+                {"name": "2.精确作业", "servoX": 0.99, "servoY": 0.79, "color": "#00d5e8"},
+                {"name": "3.回收网箱", "servoX": 0.80, "servoY": 0.76, "color": "#8fe800"},
+                {"name": "4.饲料投放", "servoX": 0.74, "servoY": 0.79, "color": "#e86800"}
+            ]
+
+        # 获取所有模式配置文件
+        mode_files = [f for f in os.listdir(modes_dir) if f.startswith("mode_") and f.endswith(".ini")]
+
+        # 如果没有找到模式配置文件，使用默认值
+        if not mode_files:
+            print("警告: 未找到模式配置文件，使用默认值")
+            return [
+                {"name": "1.海螺捕捞", "servoX": 0.85, "servoY": 0.79, "color": "#e800b6"},
+                {"name": "2.精确作业", "servoX": 0.99, "servoY": 0.79, "color": "#00d5e8"},
+                {"name": "3.回收网箱", "servoX": 0.80, "servoY": 0.76, "color": "#8fe800"},
+                {"name": "4.饲料投放", "servoX": 0.74, "servoY": 0.79, "color": "#e86800"}
+            ]
+
+        # 加载每个模式配置文件
+        for mode_file in sorted(mode_files):
+            mode_config = ConfigParser()
+            mode_path = os.path.join(modes_dir, mode_file)
+            try:
+                with open(mode_path, 'r', encoding='utf-8') as f:
+                    mode_config.read_file(f)
+                if 'mode' in mode_config:
+                    # 基本模式数据
+                    mode_data = {
+                        "name": mode_config['mode'].get('name'),
+                        "servoX": mode_config['mode'].getfloat('servoX'),
+                        "servoY": mode_config['mode'].getfloat('servoY'),
+                        "color": mode_config['mode'].get('color')
+                    }
+
+                    # 加载轴最大值和最小值
+                    if 'axis_max' in mode_config:
+                        mode_data["x_max"] = mode_config['axis_max'].getfloat('x', 4000)
+                        mode_data["y_max"] = mode_config['axis_max'].getfloat('y', 6000)
+                        mode_data["z_max"] = mode_config['axis_max'].getfloat('z', 8000)
+                        # 加载z轴最小值（如果存在）
+                        if 'z_min' in mode_config['axis_max']:
+                            mode_data["z_min"] = mode_config['axis_max'].getfloat('z_min', -8000)
+                        else:
+                            mode_data["z_min"] = -8000
+                    else:
+                        # 使用默认值
+                        mode_data["x_max"] = 4000
+                        mode_data["y_max"] = 6000
+                        mode_data["z_max"] = 8000
+                        mode_data["z_min"] = -8000
+
+                    # 加载触发器参数
+                    if 'trigger' in mode_config:
+                        mode_data["left_threshold"] = mode_config['trigger'].getfloat('left_threshold', -0.5)
+                        mode_data["x_reduction"] = mode_config['trigger'].getfloat('x_reduction', 4)
+                        mode_data["y_reduction"] = mode_config['trigger'].getfloat('y_reduction', 8)
+                        mode_data["z_reduction"] = mode_config['trigger'].getfloat('z_reduction', 8)
+                    else:
+                        # 使用默认值
+                        mode_data["left_threshold"] = -0.5
+                        mode_data["x_reduction"] = 4
+                        mode_data["y_reduction"] = 8
+                        mode_data["z_reduction"] = 8
+
+                    modes.append(mode_data)
+                else:
+                    print(f"警告: 模式配置文件 {mode_file} 缺少 [mode] 部分")
+            except Exception as e:
+                print(f"错误: 无法加载模式配置文件 {mode_file}: {str(e)}")
+
+        # 如果没有成功加载任何模式，使用默认值
+        if not modes:
+            print("警告: 未能成功加载任何模式配置，使用默认值")
+            return [
+                {"name": "1.海螺捕捞", "servoX": 0.85, "servoY": 0.79, "color": "#e800b6"},
+                {"name": "2.精确作业", "servoX": 0.99, "servoY": 0.79, "color": "#00d5e8"},
+                {"name": "3.回收网箱", "servoX": 0.80, "servoY": 0.76, "color": "#8fe800"},
+                {"name": "4.饲料投放", "servoX": 0.74, "servoY": 0.79, "color": "#e86800"}
+            ]
+
+        # 按照名称中的数字排序
+        def get_mode_number(mode):
+            # 从名称中提取数字
+            try:
+                return int(mode["name"].split(".")[0])
+            except (ValueError, IndexError):
+                return 999  # 如果无法提取数字，放在最后
+
+        # 排序模式
+        modes.sort(key=get_mode_number)
+
+        return modes
 
     def get_mode_defaults(self):
         """获取模式默认值配置"""
