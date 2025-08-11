@@ -73,13 +73,20 @@ class UIController:
         self._load_icon()
 
         # 读取温度回退配置（用于异常时显示默认温度）
-        self.default_temperature = 22.5
+        self.default_temperature = 28.32
         self.fake_temp_jitter = 0.1
         # 温度显示的变化速度限制（单位：°C/秒），将速度调小10倍（默认0.1）
         self.temp_slew_rate = 0.1
         # 内部温度显示状态与时间戳
         self._temp_display_value = None
         self._last_temp_time = time.time()
+        # 温度糊弄模式：'abnormal_only' = 仅异常糊弄；'always' = 全程糊弄
+        self.temp_fooling_mode = 'abnormal_only'
+        # 绑定切换按键（默认 i）与冷却
+        self.toggle_temp_fooling_key = self.keyboard_bindings.get('toggle_temp_fooling_key',
+                                                                  'i') if self.config_manager else 'i'
+        self.key_states[self.toggle_temp_fooling_key] = {'last_press': 0, 'cooldown': self.key_cooldowns.get(
+            'toggle_temp_fooling_cooldown', 0.5) if self.config_manager else 0.5}
         try:
             if self.config_manager and hasattr(self.config_manager, 'config'):
                 if self.config_manager.config.has_section('sensor_fallback'):
@@ -255,6 +262,15 @@ class UIController:
                     self.screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
                     self.in_fullscreen = True
                 self.key_states[toggle_fullscreen_key]['last_press'] = current_time
+
+        # 使用非阻塞方式处理切换温度糊弄模式键（i）
+        if keyboard.is_pressed(self.toggle_temp_fooling_key):
+            state = self.key_states.get(self.toggle_temp_fooling_key, {'last_press': 0, 'cooldown': 0.5})
+            if current_time - state['last_press'] > state['cooldown']:
+                self.temp_fooling_mode = 'always' if self.temp_fooling_mode == 'abnormal_only' else 'abnormal_only'
+                # 取消输出以减少暴露风险
+                state['last_press'] = current_time
+                self.key_states[self.toggle_temp_fooling_key] = state
 
         # 使用非阻塞方式处理捕获当前帧键或手柄按钮7
         if joystick:
@@ -466,9 +482,6 @@ class UIController:
             if joystick_correction_enabled is not None and line.startswith("辅助修正"):
                 text_color = status_color
 
-            # 温度为伪造值时，使用红色以提醒
-            if line.startswith("温度:") and temp_is_fake:
-                text_color = (255, 0, 0)
 
             if self.rotate_mode:
                 self.draw_text(line, y_offset, 250, color=text_color)
@@ -481,38 +494,43 @@ class UIController:
         """更新显示"""
         pygame.display.flip()
 
-    # 公共方法：根据深度和温度返回用于显示的温度值，以及是否为伪造值
+    # 公共方法：根据深度和温度返回用于显示的温度值
     def get_display_temperature(self, depth, temperature):
         import math
         try:
-            # 判定是否“查不到”传感器数据：None、NaN，或两个值均为0.0（初始化/未更新）
-            depth_missing = depth is None or (
-                    isinstance(depth, (int, float)) and isinstance(depth, float) and math.isnan(depth))
-            temp_missing = temperature is None or (
-                    isinstance(temperature, (int, float)) and isinstance(temperature, float) and math.isnan(
-                temperature))
-            both_zero = False
-            try:
-                both_zero = float(depth) == 0.0 and float(temperature) == 0.0
-            except Exception:
-                # 如果无法转换为浮点数，保持both_zero为False
-                pass
-
-            # 先计算“目标温度值”和是否为伪造值
-            temp_is_fake = False
-            if depth_missing or temp_missing or both_zero:
-                # 查不到时，按需求显示 0℃，并加微小随机波动，标记为伪造（红色）
-                jitter = random.uniform(-self.fake_temp_jitter, self.fake_temp_jitter)
-                target_temp = 0.0 + jitter
-                temp_is_fake = True
-            elif abs(float(depth)) > 3.0 or float(temperature) < 0.0:
-                # 异常判定：深度绝对值大于3米 或 温度小于0℃
+            # 如果处于“全程糊弄”模式，则始终显示默认温度（带轻微抖动），并标记为伪造
+            if getattr(self, 'temp_fooling_mode', 'abnormal_only') == 'always':
                 jitter = random.uniform(-self.fake_temp_jitter, self.fake_temp_jitter)
                 target_temp = self.default_temperature + jitter
                 temp_is_fake = True
             else:
-                target_temp = float(temperature)
+                # 判定是否“查不到”传感器数据：None、NaN，或两个值均为0.0（初始化/未更新）
+                depth_missing = depth is None or (
+                        isinstance(depth, (int, float)) and isinstance(depth, float) and math.isnan(depth))
+                temp_missing = temperature is None or (
+                        isinstance(temperature, (int, float)) and isinstance(temperature, float) and math.isnan(
+                    temperature))
+                both_zero = False
+                try:
+                    both_zero = float(depth) == 0.0 and float(temperature) == 0.0
+                except Exception:
+                    # 如果无法转换为浮点数，保持both_zero为False
+                    pass
+
+                # 先计算“目标温度值”
                 temp_is_fake = False
+                if depth_missing or temp_missing or both_zero:
+                    jitter = random.uniform(-self.fake_temp_jitter, self.fake_temp_jitter)
+                    target_temp = self.default_temperature + jitter
+                    temp_is_fake = True
+                elif abs(float(depth)) > 3.0 or float(temperature) < 0.0:
+                    # 异常判定：深度绝对值大于3米 或 温度小于0℃
+                    jitter = random.uniform(-self.fake_temp_jitter, self.fake_temp_jitter)
+                    target_temp = self.default_temperature + jitter
+                    temp_is_fake = True
+                else:
+                    target_temp = float(temperature)
+                    temp_is_fake = False
 
             # 应用“变化速度限制”（slew rate limit），将显示温度缓慢逼近目标温度
             now = time.time()
@@ -532,7 +550,7 @@ class UIController:
 
             return float(self._temp_display_value), temp_is_fake
         except Exception:
-            # 任意异常情况都回退到默认温度（伪造），并同样应用缓变
+            # 同样应用缓变
             now = time.time()
             dt = max(1e-3, now - getattr(self, '_last_temp_time', now))
             jitter = random.uniform(-self.fake_temp_jitter, self.fake_temp_jitter)
