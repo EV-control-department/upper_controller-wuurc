@@ -103,7 +103,7 @@ ROV 控制系统的硬件架构包括以下组件：
 
 - **操作系统**：Windows 10/11、Linux 或 macOS
 - **Python 版本**：Python 3.8+
-- **外部依赖**：FFmpeg（用于视频流处理）
+- **外部依赖**：FFmpeg（用于视频流处理；Windows 发行版已内置，源码运行需自行安装并加入 PATH）
 - **硬件要求**：Xbox 控制器（推荐使用 Xbox One 或 Xbox Series 控制器）
 
 ### 安装步骤

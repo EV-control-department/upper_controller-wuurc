@@ -86,7 +86,7 @@ def update_test_value(self, joystick):
         self.test_label.setText("键盘按键")
         self.test_label.setStyleSheet("color: blue;")
     elif joystick and self.button_combo and self.button_combo.value() < joystick.get_numbuttons():
-        # ...
+# ...
 ```
 
 ```python
@@ -94,13 +94,13 @@ def apply_changes(self):
     try:
         # 对于键盘绑定，更改按键已经在change_key方法中处理
         if not self.is_keyboard_binding and self.button_combo:
-            # 更新配置
-            # ...
-        elif self.is_keyboard_binding:
-            # 对于键盘绑定，提示用户使用"更改按键"按钮
-            # ...
-    except Exception as e:
+        # 更新配置
         # ...
+        elif self.is_keyboard_binding:
+    # 对于键盘绑定，提示用户使用"更改按键"按钮
+    # ...
+    except Exception as e:
+# ...
 ```
 
 ## 测试

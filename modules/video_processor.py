@@ -4,7 +4,9 @@
 """
 
 import os
+import shutil
 import subprocess
+import sys
 import threading
 
 import cv2
@@ -50,12 +52,29 @@ class VideoThread(threading.Thread):
 
     def _init_ffmpeg_process(self):
         """初始化FFmpeg进程"""
+        # 优先使用打包目录中的 ffmpeg.exe（Windows 冻结后）
+        ffmpeg_exe = 'ffmpeg'
+        try:
+            if getattr(sys, 'frozen', False):
+                # PyInstaller 下，主可执行文件位于 dist/ROV_Controller，内部资源在 _internal
+                base_dir = os.path.dirname(sys.executable)
+                candidate = os.path.join(base_dir, '_internal', 'ffmpeg.exe')
+                if os.path.exists(candidate):
+                    ffmpeg_exe = candidate
+            else:
+                # 开发环境使用 PATH 中的 ffmpeg
+                path_ffmpeg = shutil.which('ffmpeg')
+                if path_ffmpeg:
+                    ffmpeg_exe = path_ffmpeg
+        except Exception:
+            pass
+
         command = [
-            'ffmpeg',
+            ffmpeg_exe,
             '-rtsp_transport', 'tcp',  # 强制使用TCP传输
             '-fflags', 'nobuffer',  # 禁用缓冲区
             '-flags', 'low_delay',  # 低延迟标志
-            '-hwaccel', 'cuda',  # 启用CUDA硬件加速
+            '-hwaccel', 'cuda',  # 启用CUDA硬件加速（若环境不支持，FFmpeg将自行回退）
             '-hwaccel_device', '0',  # 指定使用的CUDA设备
             '-i', self.rtsp_url,  # 输入URL
             '-f', 'image2pipe',

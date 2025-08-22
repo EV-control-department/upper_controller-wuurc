@@ -1,5 +1,18 @@
 # 更新日志
 
+## V2.1.0（2025-08-22）
+
+- 打包与运行时改进：
+    - Windows 发行版内置 FFmpeg；运行时代码优先使用内置 ffmpeg.exe
+    - 处理 Pygame 2.5+（SDL3）打包兼容问题，提供降级提示
+- 目录与工具路径修正：
+    - 工具统一到 tools/ 子目录（config_editors / visualizers / utilities）
+    - UI 快捷键启动路径与文档同步修正
+- 文档与脚本：
+    - 更新 README、PROJECT_ORGANIZATION.md、modules/README.md
+    - 新增 docs/PACKAGING.md、docs/AUDIT_REPORT.md
+    - 新增 scripts/setup_and_test.(py|bat)
+
 ## 概述
 
 本次更新主要对ROV控制系统进行了封装优化，并将阻塞操作改为非阻塞模式

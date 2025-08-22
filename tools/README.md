@@ -18,16 +18,10 @@ tools/
 │   ├── start_controller_visualizer.bat  # 启动控制器可视化工具的批处理文件
 │   └── start_thrust_curve_debugger.bat  # 启动推力曲线调试器的批处理文件
 │
-├── testing/            # 测试工具
-│   ├── test_joystick_correction.py   # 手柄辅助修正测试工具
-│   ├── test_dual_motor_editing.py    # 双电机编辑测试
-│   ├── test_dual_view_fixes.py       # 双视图修复测试
-│   ├── run_dual_view_test.bat        # 运行双视图测试的批处理文件
-│   └── run_performance_test.bat      # 运行性能测试的批处理文件
-│
 └── utilities/          # 实用工具
     ├── modified_on_motion.py         # 运动修改工具
-    └── temp_draggable_plot.py        # 可拖动图表工具
+    ├── temp_draggable_plot.py        # 可拖动图表工具
+    └── xbox_debugger.py              # Xbox 控制器输入调试器
 ```
 
 ## 工具说明
@@ -42,16 +36,11 @@ tools/
 - **控制器可视化工具** (controller_visualizer.py)：实时显示控制器输入状态的可视化工具。
 - **推力曲线调试器** (thrust_curve_debugger.py)：用于调试和可视化电机推力曲线的工具。
 
-### 测试工具
-
-- **手柄辅助修正测试工具** (test_joystick_correction.py)：测试手柄辅助修正功能的工具。
-- **双电机编辑测试** (test_dual_motor_editing.py)：测试双电机编辑功能的工具。
-- **双视图修复测试** (test_dual_view_fixes.py)：测试双视图修复功能的工具。
-
 ### 实用工具
 
 - **运动修改工具** (modified_on_motion.py)：用于修改运动参数的工具。
 - **可拖动图表工具** (temp_draggable_plot.py)：提供可交互拖动的图表功能。
+- **Xbox 控制器调试器** (xbox_debugger.py)：用于查看实时手柄轴/按钮/帽开关输入的调试窗口。
 
 ## 使用方法
 

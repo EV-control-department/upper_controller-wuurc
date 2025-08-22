@@ -5,3 +5,4 @@ configparser>=5.0.0
 keyboard>=0.13.5
 PyQt5>=5.15.0
 inputs>=0.5
+pywin32>=305

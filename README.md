@@ -1,4 +1,4 @@
-# ROV上位机控制系统 V2.0.0
+# ROV上位机控制系统 V2.1.0
 
 ## 项目简介
 
@@ -6,7 +6,7 @@
 
 ## 发布信息
 
-**最新版本**: V2.0.0 (2025-08-02)
+**最新版本**: V2.1.0 (2025-08-22)
 
 此版本进行了全面的模块化重构，将阻塞操作改为非阻塞模式，显著提高了系统响应性和稳定性。详细发布说明请参阅 [发布说明文档](docs/RELEASE_NOTES.md)。
 
@@ -16,7 +16,7 @@
 
 - **操作系统**：Windows 10/11、Linux或macOS
 - **Python版本**：Python 3.8+
-- **外部依赖**：FFmpeg（用于视频流处理）
+- **外部依赖**：FFmpeg（用于视频流处理；打包版已内置 Windows FFmpeg，可直接运行）
 - **硬件要求**：Xbox控制器（推荐使用Xbox One或Xbox Series控制器）
 
 ### 安装步骤
@@ -64,7 +64,7 @@
 ### 项目结构
 
 ```
-upper_controller-wuurc_V2.0/
+upper_controller-wuurc/
 ├── assets/                    # 资源文件目录
 │   ├── calibration_images/    # 相机校准图像
 │   ├── default_image.jpg      # 默认图像
@@ -72,28 +72,30 @@ upper_controller-wuurc_V2.0/
 ├── config/                    # 配置文件目录
 │   ├── config_beyond.ini      # 主配置文件
 │   ├── config_hailing.ini     # 备用配置文件
-│   └── curve.json             # 电机曲线参数
+│   ├── modes/                 # 各作业模式配置
+│   └── curve.json             # 电机曲线参数（或由 INI 的 [curve] location 指定）
 ├── docs/                      # 文档目录
-│   ├── CHANGES.md             # 变更日志
-│   ├── CHINESE_FONT_FIX.md    # 中文字体修复说明
 │   ├── PACKAGING.md           # 打包说明文档
-│   └── requirements.md        # 需求文档
+│   ├── RELEASE_NOTES.md       # 发布说明
+│   └── notes/                 # 内部技术笔记
 ├── modules/                   # 模块目录
-│   ├── __init__.py            # 包初始化文件
 │   ├── config_manager.py      # 配置管理模块
 │   ├── depth_temperature_controller.py # 深度温度控制模块
 │   ├── hardware_controller.py # 硬件控制模块
 │   ├── joystick_controller.py # 手柄控制模块
-│   ├── main_controller.py     # 主控制器模块
 │   ├── ui_controller.py       # 用户界面控制模块
 │   └── video_processor.py     # 视频处理模块
+├── tools/                     # 开发/调试工具
+│   ├── config_editors/        # 配置编辑器
+│   ├── visualizers/           # 可视化工具
+│   └── utilities/             # 实用工具（包含 xbox_debugger.py）
+├── build/                     # 打包与spec文件
+│   ├── build_exe.bat          # 打包批处理文件
+│   └── build_exe.py           # 打包Python脚本
 ├── scripts/                   # 脚本目录
 │   └── start.bat              # 启动脚本（Windows）
-├── tests/                     # 测试目录
-│   ├── test_chinese_font.py   # 中文字体测试
-│   └── test_minimal.py        # 最小化测试
-├── build_exe.bat              # 打包批处理文件
-├── build_exe.py               # 打包Python脚本
+├── tests/                     # 测试目录（精简，保留快速单测）
+│   └── test_controller_mapping_editor.py
 ├── main.py                    # 主程序
 └── requirements.txt           # 依赖列表
 ```
@@ -118,8 +120,8 @@ upper_controller-wuurc_V2.0/
 可以将程序打包为可执行文件，方便分发和使用：
 
 1. **打包方法**：
-    - 双击`build_exe.bat`启动打包过程
-    - 或运行命令：`python build_exe.py`
+    - 双击`build\\build_exe.bat`启动打包过程
+    - 或运行命令：`python build\\build_exe.py`
 
 2. **打包结果**：
     - 打包完成后，可执行文件位于`dist/ROV_Controller`目录中
@@ -132,10 +134,10 @@ upper_controller-wuurc_V2.0/
     - 详细的优化说明请参阅`docs/PACKAGING.md`中的"文件大小优化"部分
 
 4. **注意事项**：
-    - 用户计算机上仍需安装FFmpeg并添加到系统PATH
+    - Windows 打包版已内置 FFmpeg（无需用户再安装）。从源码运行时仍需按前述步骤安装 FFmpeg。
     - 详细打包说明请参阅`docs/PACKAGING.md`
 
-### 控制说明
+### 控制说明（逻辑仅供参考，赛前改太多了懒得检查）
 
 #### 手柄控制
 
@@ -163,117 +165,91 @@ upper_controller-wuurc_V2.0/
 - **D键**：启动Xbox调试器，用于查看键位映射
 - **S键**：切换有/无畸变显示
 - **P键**：捕获当前视频帧
+- **I键**：切换温度显示模式（默认为“糊弄模式”始终显示28.32±0.1℃；按下切换为“真实数据模式”）
 - **Q键**：退出程序
 
 ## 配置文件说明
 
-### config/config_beyond.ini
+### config/config_beyond.ini（核心片段）
 
-配置文件分为多个部分：
+- [camera] 摄像头
+    - username：RTSP用户名
+    - password：RTSP密码
+    - host：摄像头主机/IP
+    - width：视频宽度
+    - height：视频高度
+    - buffer：帧缓冲大小（整数）
+    - 说明：程序会根据 username/password/host 组合生成 RTSP URL（见 ConfigManager.get_rtsp_url）。
 
-1. **[camera]** - 摄像头设置
-    - `rtsp_url` - RTSP视频流URL
-    - `width` - 视频宽度
-    - `height` - 视频高度
-    - `buffer` - 缓冲区大小
+- [serial] 网络通信
+    - host：ROV 主控的 IP（远端）
+    - remote_port：远端端口（发送命令）
+    - local_port：本地端口（接收数据）
 
-2. **[network]** - 网络设置
-    - `remote_ip` - 远程IP地址
-    - `remote_port` - 远程端口
-    - `local_port` - 本地端口
+- [joystick] 手柄
+    - buttons, axes, long, double, tick 等基础参数
 
-3. **[joystick]** - 手柄设置
-    - `deadzone` - 摇杆死区
-    - `sensitivity` - 灵敏度
-    - 各按键映射
+- [keyboard_bindings] 键盘快捷键
+    - quit_key, xbox_debugger_key, toggle_rotation_key, toggle_undistorted_key, toggle_fullscreen_key,
+      capture_frame_key, controller_visualizer_key(默认 v), controller_mapping_key(默认 m),
+      deploy_thrust_curves_key(默认 c), toggle_joystick_correction_key(默认 j)
 
-### config/curve.json
+- [key_cooldowns] 按键冷却
+    - 对应上述功能的冷却时间，单位秒（例如 controller_mapping_cooldown=0.5）
 
-电机曲线参数文件，包含：
+- [curve]
+    - location：曲线 JSON 文件名（通常为 curve.json）
 
-- 每个电机（m0-m5）的参数
-- 控制曲线的关键点参数
+- 其他分节
+  - [x],[y],[z],[yaw] 等轴配置；[speed_mode]、[mode_defaults]、[controller_timing]、[controller_thresholds]
 
-## 常见问题解决
+### config/curve.json（或由 [curve].location 指向的文件）
 
-1. **黑屏问题**：
-    - 原因：软件正在尝试接收视频流
-    - 解决方法：等待连接建立；检查网络连接、摄像头和路由器
+- 为每个电机（m0–m5）提供曲线参数：np_mid, np_ini, pp_ini, pp_mid, nt_end, nt_mid, pt_mid, pt_end。
 
-2. **控制无响应**：
-    - 原因：可能是ROV内部初始化延迟
-    - 解决方法：耐心等待；必要时重启软件
+更多配置结构请参考源码 modules/config_manager.py 中的读取方法。
 
-3. **延迟问题**：
-    - 原因：启动时视频处理线程负载高
-    - 解决方法：按下Xbox键暂时阻塞进程
+## 常见问题解决（FAQ）
 
-4. **全屏失焦**：
-    - 问题：全屏模式下失去焦点会切换屏幕
-    - 解决方法：比赛中避免切换窗口
+1. 黑屏问题：
+    - 可能原因：正在尝试接收视频流
+    - 解决：等待连接；检查网络、摄像头、路由器；确认已安装 FFmpeg 并在 PATH 中
 
-5. **FFmpeg错误**：
-    - 原因：FFmpeg未正确安装或未添加到PATH
-    - 解决方法：重新安装FFmpeg并确保添加到系统PATH
+2. 控制无响应：
+    - 可能原因：ROV 内部初始化延迟
+    - 解决：等待或重启软件；检查网络与端口配置
 
-6. **SDL3库加载失败**：
-    - 原因：Pygame 2.5.0+使用SDL3，可能在打包后无法正确加载
-    - 解决方法：
-        - 使用最新版本的打包脚本，它会自动处理SDL3问题
-        - 或手动降级Pygame：`pip install pygame==2.4.0 --force-reinstall`
-    - 详细信息：参见`docs/PACKAGING.md`中的"SDL3相关问题说明"
+3. 延迟问题：
+    - 可能原因：启动时视频处理线程负载高
+    - 解决：按 Xbox 键可短暂阻塞以缓解（参见“控制说明”）
 
-## 开发指南
+4. 全屏失焦：
+    - 现象：全屏模式下失焦会切换屏幕
+    - 建议：比赛中避免切换窗口
 
-### 项目组织说明
+5. FFmpeg 错误：
+    - 原因：未安装或未加入 PATH
+    - 解决：按 README 前述步骤安装并验证 ffmpeg -version
 
-项目已经进行了目录重组，以提高可维护性：
+6. SDL3 库加载失败（打包后）：
+    - 原因：Pygame 2.5.0+ 使用 SDL3，打包时可能缺失 DLL
+    - 解决：使用仓库内 build/build_exe.py（会尝试处理SDL3），或降级 Pygame 到 2.4.0
+    - 详细信息：见 docs/PACKAGING.md
 
-- **assets/**：存放所有资源文件，包括图像和校准数据
-- **config/**：集中存放所有配置文件
-- **docs/**：存放项目文档
-- **modules/**：存放所有Python模块
-- **scripts/**：存放启动和工具脚本
-- **tests/**：存放测试文件
+## 开发与结构文档
 
-这种组织结构使项目更加清晰，便于维护和扩展。
+- 模块总览与交互说明：modules/README.md
+- 项目结构与路径约定：PROJECT_ORGANIZATION.md
+- 工具目录说明：tools/README.md
+- 打包指南：docs/PACKAGING.md
 
-### 模块说明
+## 测试
 
-1. **config_manager.py**：
-    - 负责加载和管理配置文件
-    - 提供统一的配置访问接口
-
-2. **hardware_controller.py**：
-    - 负责与ROV硬件通信
-    - 包含控制器监控和网络通信功能
-
-3. **video_processor.py**：
-    - 处理视频流和图像处理
-    - 使用FFmpeg进行高效视频解码
-
-4. **ui_controller.py**：
-    - 负责用户界面显示
-    - 处理键盘和手柄输入
-
-5. **joystick_controller.py**：
-    - 处理手柄输入逻辑
-    - 实现各种控制模式
-
-6. **depth_temperature_controller.py**：
-    - 管理深度和温度数据记录
-    - 提供数据保存功能
-
-### 自定义开发
-
-如需修改或扩展功能，建议按照以下步骤：
-
-1. 首先了解各模块的职责和接口
-2. 在相应模块中添加或修改功能
-3. 如需添加新模块，请在modules目录下创建新文件，并在main.py中导入
-
-## 版权信息
-
-张殷瑞&人机交互中国水版本
-
-![img](https://img1.baidu.com/it/u=4019763367,1639339942&fm=253&fmt=auto&app=138&f=JPEG?w=541&h=500)
+- 一键安装依赖并运行测试（Windows 推荐）：
+    - 双击 scripts\setup_and_test.bat
+- 跨平台：
+    - python scripts\setup_and_test.py
+- 手动运行：
+    - 安装依赖：pip install -r requirements.txt
+    - 运行所有：python -m unittest discover
+    - 运行指定：python -m unittest tests.test_controller_mapping_editor

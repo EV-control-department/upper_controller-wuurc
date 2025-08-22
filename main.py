@@ -312,6 +312,7 @@ class MainController:
 
             self.ui_controller.draw_text(status_text,
                                          self.ui_controller.settings['width'] // 2,
+
                                          self.ui_controller.settings['height'] // 2 + 120,
                                          color=status_color,
                                          outline=False)

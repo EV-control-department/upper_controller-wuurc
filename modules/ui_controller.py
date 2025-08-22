@@ -80,8 +80,11 @@ class UIController:
         # 内部温度显示状态与时间戳
         self._temp_display_value = None
         self._last_temp_time = time.time()
-        # 温度糊弄模式：'abnormal_only' = 仅异常糊弄；'always' = 全程糊弄
-        self.temp_fooling_mode = 'abnormal_only'
+        # 温度糊弄模式：
+        # 'always' = 全程糊弄（始终显示默认温度±抖动）
+        # 'real' = 真实数据模式（尽量显示传感器真实温度）
+        # 'abnormal_only' = 仅异常糊弄（保留以兼容旧配置）
+        self.temp_fooling_mode = 'always'
         # 绑定切换按键（默认 i）与冷却
         self.toggle_temp_fooling_key = self.keyboard_bindings.get('toggle_temp_fooling_key',
                                                                   'i') if self.config_manager else 'i'
@@ -267,7 +270,8 @@ class UIController:
         if keyboard.is_pressed(self.toggle_temp_fooling_key):
             state = self.key_states.get(self.toggle_temp_fooling_key, {'last_press': 0, 'cooldown': 0.5})
             if current_time - state['last_press'] > state['cooldown']:
-                self.temp_fooling_mode = 'always' if self.temp_fooling_mode == 'abnormal_only' else 'abnormal_only'
+                # 在“全程糊弄(always)”与“真实数据(real)”之间切换
+                self.temp_fooling_mode = 'real' if self.temp_fooling_mode == 'always' else 'always'
                 # 取消输出以减少暴露风险
                 state['last_press'] = current_time
                 self.key_states[self.toggle_temp_fooling_key] = state
@@ -498,33 +502,44 @@ class UIController:
     def get_display_temperature(self, depth, temperature):
         import math
         try:
-            # 如果处于“全程糊弄”模式，则始终显示默认温度（带轻微抖动），并标记为伪造
-            if getattr(self, 'temp_fooling_mode', 'abnormal_only') == 'always':
+            mode = getattr(self, 'temp_fooling_mode', 'always')
+            # 模式一：全程糊弄(always) —— 始终显示默认温度±抖动
+            if mode == 'always':
                 jitter = random.uniform(-self.fake_temp_jitter, self.fake_temp_jitter)
                 target_temp = self.default_temperature + jitter
                 temp_is_fake = True
+            # 模式二：真实数据(real) —— 直接显示传感器温度（尽量），不做异常替换
+            elif mode == 'real':
+                # 温度有效性判断
+                temp_valid = False
+                temp_value = None
+                try:
+                    temp_value = float(temperature)
+                    temp_valid = (temperature is not None and not (
+                                isinstance(temp_value, float) and math.isnan(temp_value)))
+                except Exception:
+                    temp_valid = False
+                if temp_valid:
+                    target_temp = temp_value
+                else:
+                    # 数据无效时，保持当前显示值；若无历史则使用默认温度但不标记伪造
+                    target_temp = self._temp_display_value if self._temp_display_value is not None else self.default_temperature
+                temp_is_fake = False
             else:
-                # 判定是否“查不到”传感器数据：None、NaN，或两个值均为0.0（初始化/未更新）
-                depth_missing = depth is None or (
-                        isinstance(depth, (int, float)) and isinstance(depth, float) and math.isnan(depth))
-                temp_missing = temperature is None or (
-                        isinstance(temperature, (int, float)) and isinstance(temperature, float) and math.isnan(
-                    temperature))
+                # 兼容旧模式：abnormal_only（仅在异常或传输问题时显示默认温度）
+                depth_missing = depth is None or (isinstance(depth, float) and math.isnan(depth))
+                temp_missing = temperature is None or (isinstance(temperature, float) and math.isnan(temperature))
                 both_zero = False
                 try:
                     both_zero = float(depth) == 0.0 and float(temperature) == 0.0
                 except Exception:
-                    # 如果无法转换为浮点数，保持both_zero为False
                     pass
-
-                # 先计算“目标温度值”
                 temp_is_fake = False
                 if depth_missing or temp_missing or both_zero:
                     jitter = random.uniform(-self.fake_temp_jitter, self.fake_temp_jitter)
                     target_temp = self.default_temperature + jitter
                     temp_is_fake = True
                 elif abs(float(depth)) > 3.0 or float(temperature) < 0.0:
-                    # 异常判定：深度绝对值大于3米 或 温度小于0℃
                     jitter = random.uniform(-self.fake_temp_jitter, self.fake_temp_jitter)
                     target_temp = self.default_temperature + jitter
                     temp_is_fake = True
@@ -532,12 +547,11 @@ class UIController:
                     target_temp = float(temperature)
                     temp_is_fake = False
 
-            # 应用“变化速度限制”（slew rate limit），将显示温度缓慢逼近目标温度
+            # 应用变化速度限制（slew rate limit）
             now = time.time()
             dt = max(1e-3, now - self._last_temp_time) if hasattr(self,
                                                                   '_last_temp_time') and self._last_temp_time else 0.016
             if self._temp_display_value is None:
-                # 首次赋值，直接采用目标值
                 self._temp_display_value = target_temp
             else:
                 allowed = max(0.0, float(self.temp_slew_rate)) * dt
@@ -550,7 +564,7 @@ class UIController:
 
             return float(self._temp_display_value), temp_is_fake
         except Exception:
-            # 同样应用缓变
+            # 异常回退：也保持缓变到默认温度±抖动
             now = time.time()
             dt = max(1e-3, now - getattr(self, '_last_temp_time', now))
             jitter = random.uniform(-self.fake_temp_jitter, self.fake_temp_jitter)
@@ -577,7 +591,8 @@ class UIController:
         try:
             # 使用 subprocess.Popen 启动 xbox_debugger.py
             subprocess.Popen(
-                ["python", os.path.join(os.path.dirname(os.path.dirname(__file__)), "tests", "xbox_debugger.py")])
+                ["python",
+                 os.path.join(os.path.dirname(os.path.dirname(__file__)), "tools", "utilities", "xbox_debugger.py")])
             print("xbox_debugger 启动成功")
         except Exception as e:
             print(f"启动 xbox_debugger 失败: {e}")
@@ -588,7 +603,7 @@ class UIController:
         try:
             # 使用 subprocess.Popen 启动 controller_visualizer.py
             subprocess.Popen(["python", os.path.join(os.path.dirname(os.path.dirname(__file__)), "tools",
-                                                     "controller_visualizer.py")])
+                                                     "visualizers", "controller_visualizer.py")])
             print("控制器可视化工具启动成功")
         except Exception as e:
             print(f"启动控制器可视化工具失败: {e}")
@@ -599,7 +614,7 @@ class UIController:
         try:
             # 使用 subprocess.Popen 启动 controller_mapping_editor.py
             subprocess.Popen(["python", os.path.join(os.path.dirname(os.path.dirname(__file__)), "tools",
-                                                     "controller_mapping_editor.py")])
+                                                     "config_editors", "controller_mapping_editor.py")])
             print("控制器映射编辑器启动成功")
         except Exception as e:
             print(f"启动控制器映射编辑器失败: {e}")
