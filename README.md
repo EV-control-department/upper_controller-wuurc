@@ -105,13 +105,14 @@ upper_controller-wuurc/
 ### 启动程序
 
 1. **确保Xbox控制器已连接**到电脑
-
-2. **启动方式**：
+2. **安装依赖**：
+   运行`scripts/setup_and_test.py`脚本，将自动安装依赖到当前环境并测试
+3. **启动方式**（三种方法）：
     - **Windows**：双击`scripts/start.bat`
     - **命令行**：`python main.py`
-    - **可执行文件**：双击`ROV_Controller.exe`（如已打包）
+   - **可执行文件**：（如已打包），双击`ROV_Controller.exe`
 
-3. **使用自定义配置**：
+4. **使用自定义配置**：
     - 修改`modules/config_manager.py`中的默认配置路径
     - 或在命令行中指定：`python main.py --config config/your_custom_config.ini`
 
@@ -137,7 +138,7 @@ upper_controller-wuurc/
     - Windows 打包版已内置 FFmpeg（无需用户再安装）。从源码运行时仍需按前述步骤安装 FFmpeg。
     - 详细打包说明请参阅`docs/PACKAGING.md`
 
-### 控制说明（逻辑仅供参考，赛前改太多了懒得检查）
+### 控制说明（若未进行自定义配置，可参考如下，逻辑仅供参考，赛前改太多了懒得检查）
 
 #### 手柄控制
 
@@ -253,3 +254,16 @@ upper_controller-wuurc/
     - 安装依赖：pip install -r requirements.txt
     - 运行所有：python -m unittest discover
     - 运行指定：python -m unittest tests.test_controller_mapping_editor
+
+## 制作发行包（Release）
+
+在完成打包（生成 dist/ROV_Controller）后，可一键生成发行压缩包：
+
+- Windows：双击 scripts\make_release.bat
+- 或运行：python scripts\make_release.py
+
+生成的发布压缩包位于 release/ROV_Controller_v{version}.zip，包含：
+
+- ROV_Controller/ 可执行程序目录
+- docs/（RELEASE_NOTES.md、PACKAGING.md）
+- README_release.md（简要使用说明）

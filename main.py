@@ -382,59 +382,59 @@ class MainController:
         self.ui_controller.display_frame(self.default_image)
 
         # 更新all_ready状态
-        all_ready = other_components_ready and motors_ready
+        # all_ready = other_components_ready and motors_ready
 
-        if all_ready:
-            status_text = "所有组件已就绪，即将启动主程序..."
-            status_color = (0, 255, 0)  # 绿色
-        elif force_entry:
-            status_text = "用户强制进入系统"
-            status_color = (255, 200, 0)  # 黄色
-        else:
-            # 列出未就绪的组件
-            failed_components = []
-            if not video_ready:
-                failed_components.append("视频流")
-            if not joystick_ready:
-                failed_components.append("手柄")
-            if not sensor_ready:
-                failed_components.append("温湿度传感器")
-            if not current_ready:
-                failed_components.append("电流下发")
-            if not motors_ready:
-                failed_components.append("电机")
-
-            status_text = f"部分组件未就绪 ({', '.join(failed_components)})，将尝试启动主程序..."
-            status_color = (255, 165, 0)  # 橙色
+        # if all_ready:
+        #     status_text = "所有组件已就绪，即将启动主程序..."
+        #     status_color = (0, 255, 0)  # 绿色
+        # elif force_entry:
+        #     status_text = "用户强制进入系统"
+        #     status_color = (255, 200, 0)  # 黄色
+        # else:
+        #     # 列出未就绪的组件
+        #     failed_components = []
+        #     if not video_ready:
+        #         failed_components.append("视频流")
+        #     if not joystick_ready:
+        #         failed_components.append("手柄")
+        #     if not sensor_ready:
+        #         failed_components.append("温湿度传感器")
+        #     if not current_ready:
+        #         failed_components.append("电流下发")
+        #     if not motors_ready:
+        #         failed_components.append("电机")
+        #
+        #     status_text = f"部分组件未就绪 ({', '.join(failed_components)})，将尝试启动主程序..."
+        #     status_color = (255, 165, 0)  # 橙色
 
         # 绘制标题
-        self.ui_controller.draw_text("初始化结果",
-                                     self.ui_controller.settings['width'] // 2,
-                                     self.ui_controller.settings['height'] // 2 - 100,
-                                     color=(255, 255, 255),
-                                     bold=True,
-                                     outline=True)
-
-        # 绘制状态信息
-        self.ui_controller.draw_text(status_text,
-                                     self.ui_controller.settings['width'] // 2,
-                                     self.ui_controller.settings['height'] // 2,
-                                     color=status_color,
-                                     bold=True,
-                                     outline=True)
-
-        # 绘制提示信息
-        self.ui_controller.draw_text("即将进入主程序...",
-                                     self.ui_controller.settings['width'] // 2,
-                                     self.ui_controller.settings['height'] // 2 + 100,
-                                     color=(200, 200, 200),
-                                     bold=False,
-                                     outline=True)
-
-        self.ui_controller.update_display()
-
-        # 等待3秒让用户查看状态
-        time.sleep(3)
+        # self.ui_controller.draw_text("初始化结果",
+        #                              self.ui_controller.settings['width'] // 2,
+        #                              self.ui_controller.settings['height'] // 2 - 100,
+        #                              color=(255, 255, 255),
+        #                              bold=True,
+        #                              outline=True)
+        #
+        # # 绘制状态信息
+        # self.ui_controller.draw_text(status_text,
+        #                              self.ui_controller.settings['width'] // 2,
+        #                              self.ui_controller.settings['height'] // 2,
+        #                              color=status_color,
+        #                              bold=True,
+        #                              outline=True)
+        #
+        # # 绘制提示信息
+        # self.ui_controller.draw_text("即将进入主程序...",
+        #                              self.ui_controller.settings['width'] // 2,
+        #                              self.ui_controller.settings['height'] // 2 + 100,
+        #                              color=(200, 200, 200),
+        #                              bold=False,
+        #                              outline=True)
+        #
+        # self.ui_controller.update_display()
+        #
+        # # 等待3秒让用户查看状态
+        # time.sleep(3)
 
         # 如果用户强制进入，确保仍然部署推力曲线
         if force_entry:
@@ -529,12 +529,15 @@ class MainController:
         if all_initialized:
             status_text = "所有电机初始化成功"
             status_color = (100, 255, 100)  # 绿色
+            time.sleep(0.5)
         elif force_entry:
             status_text = "用户强制进入系统"
             status_color = (255, 200, 0)  # 黄色
+            time.sleep(2)
         else:
             status_text = f"部分电机初始化失败: {', '.join(self.hw_controller.get_failed_motors())}"
             status_color = (255, 100, 100)  # 红色
+            time.sleep(2)
 
         self.ui_controller.draw_text(status_text,
                                      self.ui_controller.settings['width'] // 2,
@@ -545,7 +548,6 @@ class MainController:
         self.ui_controller.update_display()
 
         # 等待2秒让用户查看状态
-        time.sleep(2)
 
         return all_initialized
 
