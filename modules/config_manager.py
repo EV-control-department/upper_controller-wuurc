@@ -5,6 +5,7 @@
 
 import json
 import os
+import sys
 from configparser import ConfigParser
 
 
@@ -20,9 +21,15 @@ class ConfigManager:
         """
         self.config = ConfigParser()
 
-        # 如果未指定配置文件路径，使用默认路径
+        # 如果未指定配置文件路径，根据平台自动选择
         if config_path is None:
-            config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config", "config_beyond.ini")
+            base_name = "config_beyond"
+            if sys.platform.startswith('linux'):
+                config_path = os.path.join(
+                    os.path.dirname(os.path.dirname(__file__)), "config", f"{base_name}_linux.ini")
+            else:
+                config_path = os.path.join(
+                    os.path.dirname(os.path.dirname(__file__)), "config", f"{base_name}_win.ini")
 
         # 使用UTF-8编码读取配置文件
         self.config.read(config_path, encoding='utf-8')
@@ -112,13 +119,19 @@ class ConfigManager:
 
     def get_joystick_settings(self):
         """获取手柄设置"""
-        return {
+        result = {
             "buttons": self.config["joystick"].getint("buttons"),
             "axes": self.config["joystick"].getint("axes"),
             "long": self.config["joystick"].getint("long"),
             "double": self.config["joystick"].getint("double"),
             "tick": self.config["joystick"].getint("tick")
         }
+        # 扳机轴号（平台相关，如存在则读取）
+        if self.config.has_option("joystick", "left_trigger_axis"):
+            result["left_trigger_axis"] = self.config["joystick"].getint("left_trigger_axis")
+        if self.config.has_option("joystick", "right_trigger_axis"):
+            result["right_trigger_axis"] = self.config["joystick"].getint("right_trigger_axis")
+        return result
 
     def get_axis_config(self, axis_name):
         """获取指定轴的配置"""
@@ -282,11 +295,22 @@ class ConfigManager:
 
     def get_controller_thresholds(self):
         """获取控制器阈值设置"""
-        return {
+        result = {
             "left_trigger_threshold": self.config["controller_thresholds"].getfloat("left_trigger_threshold"),
             "right_trigger_threshold": self.config["controller_thresholds"].getfloat("right_trigger_threshold"),
             "hat_up_value": self.config["controller_thresholds"].getint("hat_up_value")
         }
+        # 扳机轴号（优先从 joystick 节读取，兼容旧配置）
+        joystick_settings = self.get_joystick_settings()
+        if "left_trigger_axis" in joystick_settings:
+            result["left_trigger_axis"] = joystick_settings["left_trigger_axis"]
+        else:
+            result["left_trigger_axis"] = 4  # Windows 默认
+        if "right_trigger_axis" in joystick_settings:
+            result["right_trigger_axis"] = joystick_settings["right_trigger_axis"]
+        else:
+            result["right_trigger_axis"] = 5  # Windows 默认
+        return result
 
     def get_keyboard_bindings(self):
         """获取键盘绑定设置"""

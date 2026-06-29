@@ -1,57 +1,64 @@
-# Python bytecode files
+# ─── Python ───────────────────────────────────────
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
 
-# Distribution / packaging
+# ─── Virtual environments ─────────────────────────
+venv/
+env/
+ENV/
+.venv/
+rov_upper/
+
+# ─── Distribution / packaging ─────────────────────
 dist/
 build/
 build_info/
 *.egg-info/
 *.egg
+*.spec
+release/
 
-# Virtual environments
-venv/
-env/
-ENV/
-
-# IDE specific files
+# ─── IDE / Editor ────────────────────────────────
 .idea/
 .vscode/
 *.swp
 *.swo
+*~
+/.junie/
 
-# Logs and databases
+# ─── OS files ────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ─── Logs and databases ──────────────────────────
 *.log
 logs/
 *.sqlite3
 *.db
 
-# Build artifacts
+# ─── Build artifacts ─────────────────────────────
+*.zip
+*.7z
 ROV_Controller_V*.zip
-*.spec
-release/
 
-# Compiled files
-*.so
+# ─── Compiled binaries ──────────────────────────
 *.dll
 *.exe
+*.pyd
 
-# Captures and media
+# ─── Captures and media ─────────────────────────
 captures/
 assets/capture*.jpg
 
-# Local configuration
+# ─── Config ─────────────────────────────────────
 config_local.ini
 
-# Temporary files
+# ─── Temp files ─────────────────────────────────
 *.tmp
 *.bak
-.DS_Store
-
-# Author information
-# Zhang Yinrui zhangyinrui00@google.com
-/.junie/
+*.swp
 
 
 

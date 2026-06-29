@@ -8,8 +8,27 @@ import random
 import subprocess
 import time
 
-import keyboard
 import pygame
+
+
+# 字符到 Pygame 键常量的映射
+_CHAR_TO_PYGAME_KEY = {
+    'a': pygame.K_a, 'b': pygame.K_b, 'c': pygame.K_c, 'd': pygame.K_d,
+    'e': pygame.K_e, 'f': pygame.K_f, 'g': pygame.K_g, 'h': pygame.K_h,
+    'i': pygame.K_i, 'j': pygame.K_j, 'k': pygame.K_k, 'l': pygame.K_l,
+    'm': pygame.K_m, 'n': pygame.K_n, 'o': pygame.K_o, 'p': pygame.K_p,
+    'q': pygame.K_q, 'r': pygame.K_r, 's': pygame.K_s, 't': pygame.K_t,
+    'u': pygame.K_u, 'v': pygame.K_v, 'w': pygame.K_w, 'x': pygame.K_x,
+    'y': pygame.K_y, 'z': pygame.K_z,
+}
+
+
+def _is_key_pressed(key_name):
+    """跨平台按键检测：使用 Pygame 键盘状态（替代 keyboard.is_pressed）"""
+    if len(key_name) == 1 and 'a' <= key_name <= 'z':
+        return pygame.key.get_pressed()[_CHAR_TO_PYGAME_KEY[key_name]]
+    # 特殊键名（如 shift, ctrl 等）暂不支持，返回 False
+    return False
 
 
 class UIController:
@@ -129,24 +148,39 @@ class UIController:
                 raise Exception("Font does not support Chinese characters")
 
         except:
-            # 尝试使用系统中支持中文的字体
+            # 尝试使用系统中支持中文的字体（兼容 Windows 和 Linux）
             system_fonts = pygame.font.get_fonts()
-            chinese_fonts = [f for f in system_fonts if
-                             f in ['simsun', 'simhei', 'microsoftyahei', 'dengxian', 'fangsong', 'kaiti']]
+            chinese_font_candidates = [
+                # Windows 中文字体
+                'simsun', 'simhei', 'microsoftyahei', 'dengxian', 'fangsong', 'kaiti',
+                # Linux 中文字体（Noto CJK, 文泉驿等）
+                'notosanscjksc', 'notosanscjktc', 'notosanscjkhk', 'notosanscjkjp', 'notosanscjpkr',
+                'notoserifcjksc', 'notoserifcjktc', 'notoserifcjkhk',
+                'wqyzenhei', 'wqymicrohei', 'wenquanyizenheimicro',
+                'arplumingtwmbe', 'arplukaitwmbebook',
+            ]
+            chinese_fonts = [f for f in system_fonts if f in chinese_font_candidates]
 
             if chinese_fonts:
                 self.font = pygame.font.SysFont(chinese_fonts[0], self.settings['font_size'])
                 print(f"使用中文字体: {chinese_fonts[0]}")
             else:
-                # 如果没有找到中文字体，使用默认字体
-                self.font = pygame.font.Font(None, self.settings['font_size'])
-                print("警告: 未找到支持中文的字体，可能导致中文显示异常")
+                # 如果仍未找到，尝试通过关键字匹配
+                chinese_fonts = [f for f in system_fonts if any(k in f for k in
+                                 ['cjk', 'wqy', 'wenquan', 'arpl', 'chinese', 'hans', 'hangul'])]
+                if chinese_fonts:
+                    self.font = pygame.font.SysFont(chinese_fonts[0], self.settings['font_size'])
+                    print(f"使用中文字体: {chinese_fonts[0]}")
+                else:
+                    # 如果没有找到中文字体，使用默认字体
+                    self.font = pygame.font.Font(None, self.settings['font_size'])
+                    print("警告: 未找到支持中文的字体，可能导致中文显示异常")
 
     def _load_icon(self):
         """加载窗口图标"""
         try:
             # 获取图标文件路径
-            icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'assets\EV.jpg')
+            icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'assets', 'EV.jpg')
             icon_surface = pygame.image.load(icon_path)
             pygame.display.set_icon(icon_surface)
             print(f"成功设置窗口图标: {icon_path}")
@@ -199,32 +233,32 @@ class UIController:
         toggle_joystick_correction_key = self.keyboard_bindings.get('toggle_joystick_correction_key', 'j')
 
         # 处理键盘输入 - 使用非阻塞方式
-        if keyboard.is_pressed(quit_key):
+        if _is_key_pressed(quit_key):
             running = False
 
         # 使用非阻塞方式处理Xbox调试器键
-        if keyboard.is_pressed(xbox_debugger_key):
+        if _is_key_pressed(xbox_debugger_key):
             if current_time - self.key_states[xbox_debugger_key]['last_press'] > self.key_states[xbox_debugger_key][
                 'cooldown']:
                 self.open_xbox_debugger()
                 self.key_states[xbox_debugger_key]['last_press'] = current_time
 
         # 使用非阻塞方式处理控制器可视化工具键
-        if keyboard.is_pressed(controller_visualizer_key):
+        if _is_key_pressed(controller_visualizer_key):
             if current_time - self.key_states[controller_visualizer_key]['last_press'] > \
                     self.key_states[controller_visualizer_key]['cooldown']:
                 self.open_controller_visualizer()
                 self.key_states[controller_visualizer_key]['last_press'] = current_time
 
         # 使用非阻塞方式处理控制器映射编辑器键
-        if keyboard.is_pressed(controller_mapping_key):
+        if _is_key_pressed(controller_mapping_key):
             if current_time - self.key_states[controller_mapping_key]['last_press'] > \
                     self.key_states[controller_mapping_key]['cooldown']:
                 self.open_controller_mapping_editor()
                 self.key_states[controller_mapping_key]['last_press'] = current_time
 
         # 使用非阻塞方式处理部署推力曲线键
-        if keyboard.is_pressed(deploy_thrust_curves_key):
+        if _is_key_pressed(deploy_thrust_curves_key):
             if current_time - self.key_states[deploy_thrust_curves_key]['last_press'] > \
                     self.key_states[deploy_thrust_curves_key]['cooldown']:
                 if main_controller:
@@ -232,7 +266,7 @@ class UIController:
                 self.key_states[deploy_thrust_curves_key]['last_press'] = current_time
 
         # 使用非阻塞方式处理切换手柄辅助修正键
-        if keyboard.is_pressed(toggle_joystick_correction_key):
+        if _is_key_pressed(toggle_joystick_correction_key):
             if current_time - self.key_states[toggle_joystick_correction_key]['last_press'] > \
                     self.key_states[toggle_joystick_correction_key]['cooldown']:
                 if main_controller:
@@ -240,21 +274,21 @@ class UIController:
                 self.key_states[toggle_joystick_correction_key]['last_press'] = current_time
 
         # 使用非阻塞方式处理切换屏幕方向键
-        if keyboard.is_pressed(toggle_rotation_key):
+        if _is_key_pressed(toggle_rotation_key):
             if current_time - self.key_states[toggle_rotation_key]['last_press'] > self.key_states[toggle_rotation_key][
                 'cooldown']:
                 self.rotate_mode = not self.rotate_mode
                 self.key_states[toggle_rotation_key]['last_press'] = current_time
 
         # 使用非阻塞方式处理切换无失真视图键
-        if keyboard.is_pressed(toggle_undistorted_key):
+        if _is_key_pressed(toggle_undistorted_key):
             if current_time - self.key_states[toggle_undistorted_key]['last_press'] > \
                     self.key_states[toggle_undistorted_key]['cooldown']:
                 self.show_undistorted = not self.show_undistorted
                 self.key_states[toggle_undistorted_key]['last_press'] = current_time
 
         # 使用非阻塞方式处理切换全屏键
-        if keyboard.is_pressed(toggle_fullscreen_key):
+        if _is_key_pressed(toggle_fullscreen_key):
             if current_time - self.key_states[toggle_fullscreen_key]['last_press'] > \
                     self.key_states[toggle_fullscreen_key]['cooldown']:
                 if self.in_fullscreen:
@@ -267,7 +301,7 @@ class UIController:
                 self.key_states[toggle_fullscreen_key]['last_press'] = current_time
 
         # 使用非阻塞方式处理切换温度糊弄模式键（i）
-        if keyboard.is_pressed(self.toggle_temp_fooling_key):
+        if _is_key_pressed(self.toggle_temp_fooling_key):
             state = self.key_states.get(self.toggle_temp_fooling_key, {'last_press': 0, 'cooldown': 0.5})
             if current_time - state['last_press'] > state['cooldown']:
                 # 在“全程糊弄(always)”与“真实数据(real)”之间切换
@@ -279,7 +313,7 @@ class UIController:
         # 使用非阻塞方式处理捕获当前帧键或手柄按钮7
         if joystick:
             button7_pressed = joystick.get_button(7)
-            p_key_pressed = keyboard.is_pressed(capture_frame_key)
+            p_key_pressed = _is_key_pressed(capture_frame_key)
 
             if button7_pressed:
                 if current_time - self.key_states['button7']['last_press'] > self.key_states['button7']['cooldown']:
@@ -766,7 +800,7 @@ class JoystickHandler:
         获取轴的值
         
         参数:
-            axis_id: 轴ID
+            axis_id: 轴ID（配置文件中定义的物理轴号，不同平台不同）
             
         返回:
             轴的值，如果没有手柄则返回0

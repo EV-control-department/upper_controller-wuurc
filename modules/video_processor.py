@@ -12,6 +12,10 @@ import threading
 import cv2
 import numpy as np
 
+# Windows 专用常量，Linux 上不需要
+if not hasattr(subprocess, 'CREATE_NO_WINDOW'):
+    subprocess.CREATE_NO_WINDOW = 0
+
 
 class VideoThread(threading.Thread):
     """视频处理线程，处理视频流和图像处理"""

@@ -62,6 +62,10 @@ class JoystickController:
         # 获取控制器阈值设置
         self.thresholds = self.config_manager.get_controller_thresholds()
 
+        # 扳机轴号（从配置读取，平台相关）
+        self.left_trigger_axis = self.thresholds.get("left_trigger_axis", 4)
+        self.right_trigger_axis = self.thresholds.get("right_trigger_axis", 5)
+
         # 初始化手柄辅助修正
         try:
             # 检查joystick_correction是否是ConfigParser的section
@@ -131,10 +135,10 @@ class JoystickController:
         current_mode = self.catch_modes[self.catch_mode_ptr]
         left_trigger_threshold = current_mode.get("left_threshold", self.thresholds["left_trigger_threshold"])
         
-        if self.joystick_handler.get_axis(4) > left_trigger_threshold and self.pre_speed_mode_ptr == 0:
+        if self.joystick_handler.get_axis(self.left_trigger_axis) > left_trigger_threshold and self.pre_speed_mode_ptr == 0:
             self.pre_speed_mode_ptr = self.speed_mode_ptr
             self.speed_mode_ptr = 0
-        elif self.pre_speed_mode_ptr != 0 and self.joystick_handler.get_axis(4) < left_trigger_threshold:
+        elif self.pre_speed_mode_ptr != 0 and self.joystick_handler.get_axis(self.left_trigger_axis) < left_trigger_threshold:
             self.speed_mode_ptr = self.pre_speed_mode_ptr
             self.pre_speed_mode_ptr = 0
 
@@ -175,7 +179,7 @@ class JoystickController:
                                                                 self.speed_modes[self.speed_mode_ptr]["rate"]
                                                         ) * controller_curve(
                 corrected_yaw
-            ) * (1 - (self.joystick_handler.get_axis(4) + 1) / 8)
+            ) * (1 - (self.joystick_handler.get_axis(self.left_trigger_axis) + 1) / 8)
         else:
             self.controller_monitor.controller["yaw"] = 0.0
 
@@ -186,7 +190,7 @@ class JoystickController:
                                                               self.speed_modes[self.speed_mode_ptr]["rate"]
                                                       ) * controller_curve(
                 corrected_y
-            ) * (1 - (self.joystick_handler.get_axis(4) + 1) / y_reduction)
+            ) * (1 - (self.joystick_handler.get_axis(self.left_trigger_axis) + 1) / y_reduction)
         else:
             self.controller_monitor.controller["y"] = 0.0
 
@@ -197,7 +201,7 @@ class JoystickController:
                                                               self.speed_modes[self.speed_mode_ptr]["rate"]
                                                       ) * controller_curve(
                 corrected_x
-            ) * (1 - (self.joystick_handler.get_axis(4) + 1) / x_reduction)
+            ) * (1 - (self.joystick_handler.get_axis(self.left_trigger_axis) + 1) / x_reduction)
         else:
             self.controller_monitor.controller["x"] = 0.0
 
@@ -218,7 +222,7 @@ class JoystickController:
                                                               abs(z_limit) *
                                                               self.speed_modes[self.speed_mode_ptr]["rate"]
                                                       ) * curved_input * (1 - (
-                    self.joystick_handler.get_axis(4) + 1) / z_reduction)
+                    self.joystick_handler.get_axis(self.left_trigger_axis) + 1) / z_reduction)
         else:
             self.controller_monitor.controller["z"] = 0.0
 
@@ -228,12 +232,12 @@ class JoystickController:
         if self.joystick_handler.get_hat(0) == self.thresholds["hat_up_value"]:
             self.controller_monitor.controller["servo0"] = self.servo_positions[4]
 
-        # 处理舵机控制
+        # 处理舵机控制（未锁定模式 - 直接控制）
         if self.lock_mode_ptr == 2:  # 未锁定
-            if self.joystick_handler.get_axis(5) > self.config_manager.config["servo"].getfloat("deadzone"):  # 右扳机
+            if self.joystick_handler.get_axis(self.right_trigger_axis) > self.config_manager.config["servo"].getfloat("deadzone"):  # 右扳机
                 self.controller_monitor.controller["servo0"] = (
                                                                        self.servo_positions[0] - self.servo_positions[1]
-                                                               ) * (1 - (self.joystick_handler.get_axis(5) + 1) / 2) + \
+                                                               ) * (1 - (self.joystick_handler.get_axis(self.right_trigger_axis) + 1) / 2) + \
                                                                self.servo_positions[1]
 
         # 处理左肩键（打开舵机）
@@ -243,40 +247,46 @@ class JoystickController:
             self.controller_monitor.controller["servo0"] = self.servo_positions[0]  # 打开
             self.joystick_handler.start_rumble(open_button)
 
-        # 处理右肩键（关闭舵机）
+        # 处理右肩键（关闭舵机）→ 进入锁定状态
         close_button = self.config_manager.config["servo"].getint("close_button")
         close_trig = self.config_manager.config["servo"].get("close_trig")
         if self.joystick_handler.buttons[close_button][close_trig]:
             self.controller_monitor.controller["servo0"] = self.servo_positions[1]  # 关闭
             self.lock_mode_ptr = 0
+            self.release_state = False
             self.joystick_handler.start_rumble(close_button)
 
         # 处理按钮3（Y按钮）
         if self.joystick_handler.buttons[3]["down"]:
             self.controller_monitor.controller["servo0"] = self.catch_modes[self.catch_mode_ptr]["servoY"]
             self.lock_mode_ptr = 0
+            self.release_state = False
             self.joystick_handler.start_rumble(3)
 
         # 处理按钮2（X按钮）
         if self.joystick_handler.buttons[2]["down"]:
             self.controller_monitor.controller["servo0"] = self.catch_modes[self.catch_mode_ptr]["servoX"]
             self.lock_mode_ptr = 0
+            self.release_state = False
             self.joystick_handler.start_rumble(2)
 
-        # 处理右扳机释放状态
+        # 处理右扳机释放状态（仅从 Lock 状态进入）
         right_trigger_threshold = self.thresholds["right_trigger_threshold"]
         servo_deadzone = self.config_manager.config["servo"].getfloat("deadzone")
 
-        if self.joystick_handler.get_axis(5) > right_trigger_threshold and not self.release_state:
+        if self.lock_mode_ptr == 0 and self.joystick_handler.get_axis(self.right_trigger_axis) > right_trigger_threshold and not self.release_state:
+            # Lock 状态下按下右扳机 → 保存当前舵机位置，开始释放
             self.release_state = self.controller_monitor.controller["servo0"]
-        elif self.joystick_handler.get_axis(5) < servo_deadzone and self.release_state:
+        elif self.release_state and self.joystick_handler.get_axis(self.right_trigger_axis) < servo_deadzone:
+            # 扳机完全松开 → 回到 Lock 状态
             self.release_state = False
-            self.lock_mode_ptr = 2
+            self.lock_mode_ptr = 0
         elif self.release_state:
+            # 释放中：扳机逐渐松开 → 爪子逐渐张开
             self.controller_monitor.controller["servo0"] = (
                                                                    self.servo_positions[0] - self.release_state
                                                            ) * (1 - (
-                    self.joystick_handler.get_axis(5) + 1) / 2) + self.release_state
+                    self.joystick_handler.get_axis(self.right_trigger_axis) + 1) / 2) + self.release_state
             self.lock_mode_ptr = 1
 
         # 处理按钮9（B按钮）- 切换抓取模式
