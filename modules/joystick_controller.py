@@ -12,7 +12,7 @@ from modules.joystick_correction import JoystickCorrection
 class JoystickController:
     """手柄控制器类，封装手柄输入处理功能"""
 
-    def __init__(self, joystick_handler, config_manager, controller_monitor):
+    def __init__(self, joystick_handler, config_manager, controller_monitor, gimbal_controller=None):
         """
         初始化手柄控制器
         
@@ -24,6 +24,9 @@ class JoystickController:
         self.joystick_handler = joystick_handler
         self.config_manager = config_manager
         self.controller_monitor = controller_monitor
+        self.gimbal_controller = gimbal_controller
+        self.gimbal_speeds = self.config_manager.get_gimbal_speeds()
+        self._gimbal_direction = None
 
         # 模式设置
         self.speed_modes = self.config_manager.get_speed_modes()
@@ -226,12 +229,34 @@ class JoystickController:
         else:
             self.controller_monitor.controller["z"] = 0.0
 
+    def process_gimbal_controls(self):
+        """将方向键上下映射为云台俯仰控制。"""
+        if self.gimbal_controller is None:
+            return
+
+        _, hat_y = self.joystick_handler.get_hat(0)
+        if hat_y > 0:
+            direction = "01"  # 方向键上：云台向上看
+        elif hat_y < 0:
+            direction = "02"  # 方向键下：云台向下看
+        else:
+            direction = "00"  # 松开方向键：停止云台
+
+        if direction == "01":
+            speed_rad_s = self.gimbal_speeds["up"]
+        elif direction == "02":
+            speed_rad_s = self.gimbal_speeds["down"]
+        else:
+            speed_rad_s = 0.0
+
+        # 按住期间持续发送速度指令；松开后只发送一次停止指令。
+        # GSP 是持续运动控制，不能只在按下瞬间发送一次。
+        if direction != "00" or self._gimbal_direction != "00":
+            if self.gimbal_controller.send_pitch_speed(direction, speed_rad_s):
+                self._gimbal_direction = direction
+
     def process_servo_controls(self):
         """处理舵机控制"""
-        # 处理方向键输入
-        if self.joystick_handler.get_hat(0) == self.thresholds["hat_up_value"]:
-            self.controller_monitor.controller["servo0"] = self.servo_positions[4]
-
         # 处理舵机控制（未锁定模式 - 直接控制）
         if self.lock_mode_ptr == 2:  # 未锁定
             if self.joystick_handler.get_axis(self.right_trigger_axis) > self.config_manager.config["servo"].getfloat("deadzone"):  # 右扳机
@@ -302,6 +327,9 @@ class JoystickController:
         
     def process_input(self):
         """处理所有手柄输入"""
+        # 方向键上下专用于云台控制，优先处理以确保松开后及时发送停止指令。
+        self.process_gimbal_controls()
+
         # 检查阻塞状态
         if self.check_depth_temp_block() or self.check_button10_block():
             return True  # 跳过其他输入处理

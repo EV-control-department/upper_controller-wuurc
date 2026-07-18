@@ -89,6 +89,24 @@ class ConfigManager:
         port = self.config["serial"].getint("remote_port")
         return (host, port)
 
+    def get_gimbal_address(self):
+        """获取云台 TOP Protocol 地址，未配置时使用云台默认地址。"""
+        if self.config.has_section("gimbal"):
+            host = self.config["gimbal"].get("host", "192.168.0.38")
+            port = self.config["gimbal"].getint("remote_port", fallback=5000)
+            return (host, port)
+        return ("192.168.0.38", 5000)
+
+    def get_gimbal_speeds(self):
+        """获取方向键对应的云台俯仰速度，单位为 rad/s。"""
+        if self.config.has_section("gimbal"):
+            section = self.config["gimbal"]
+            return {
+                "up": section.getfloat("up_speed_rad_s", fallback=0.35),
+                "down": section.getfloat("down_speed_rad_s", fallback=0.35),
+            }
+        return {"up": 0.35, "down": 0.35}
+
     def get_local_port(self):
         """获取本地端口"""
         return self.config["serial"].getint("local_port")

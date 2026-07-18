@@ -9,6 +9,7 @@ import pygame
 
 from modules.config_manager import ConfigManager
 from modules.hardware_controller import (
+    GimbalController,
     HardwareController,
     ControllerMonitor,
     NetworkWorker
@@ -41,6 +42,7 @@ class MainController:
         # 初始化硬件控制器
         server_address = self.config_manager.get_server_address()
         self.hw_controller = HardwareController(server_address, self.config_manager.motor_params)
+        self.gimbal_controller = GimbalController(self.config_manager.get_gimbal_address())
 
         # 设置网络套接字
         self.client_socket = self.hw_controller.setup_socket(self.config_manager.get_local_port())
@@ -79,7 +81,8 @@ class MainController:
         self.joystick_controller = JoystickController(
             self.joystick_handler,
             self.config_manager,
-            self.controller_monitor
+            self.controller_monitor,
+            self.gimbal_controller
         )
 
         # 初始化深度温度线程（不立即启动）
@@ -658,6 +661,13 @@ class MainController:
 
     def _cleanup_other_resources(self):
         """清理其他资源"""
+        # 停止并关闭云台 UDP 通信
+        try:
+            if hasattr(self, 'gimbal_controller'):
+                self.gimbal_controller.stop()
+        except Exception as e:
+            print(f"关闭云台通信时出错: {str(e)}")
+
         # 停止网络工作线程
         try:
             if hasattr(self.network_worker, 'stop'):

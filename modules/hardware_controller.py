@@ -4,9 +4,94 @@
 """
 
 import json
+import math
 import socket
+import struct
 import threading
 import time
+
+
+# 下位机协议帧常量
+FRAME_HEADER = b"\xFA\xAF"
+FRAME_FOOTER = b"\xFB\xBF"
+CMD_MOTION_CTRL = 0x01
+CMD_THRUST_CONFIG = 0x02
+CMD_DEPTH_TEMP = 0x03
+CMD_THRUST_ACK = 0x04
+
+
+class GimbalController:
+    """云台 TOP Protocol UDP 控制器。"""
+
+    def __init__(self, server_address=("192.168.0.38", 5000)):
+        self.server_address = server_address
+        self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.client_socket.setblocking(False)
+
+    @staticmethod
+    def calculate_crc(payload):
+        """计算 TOP 协议 ASCII 特征累加和。"""
+        return f"{sum(ord(char) for char in payload) & 0xFF:02X}"
+
+    @classmethod
+    def build_packet(cls, command, data):
+        """构造 TOP 协议云台控制报文。"""
+        data = str(data)
+        len_char = f"{len(data):X}"[-1].upper()
+        packet = f"#TPUG{len_char}w{command}{data}"
+        return packet + cls.calculate_crc(packet)
+
+    def send_command(self, command, data):
+        """发送一个 TOP Protocol 命令。"""
+        try:
+            packet = self.build_packet(command, data)
+            self.client_socket.sendto(packet.encode("ascii"), self.server_address)
+            return True
+        except (OSError, ValueError) as exc:
+            print(f"发送云台指令失败: {exc}")
+            return False
+
+    def send_ptz(self, direction):
+        """
+        发送云台 PTZ 指令。
+
+        direction:
+            00 - 停止
+            01 - 向上
+            02 - 向下
+        """
+        return self.send_command("PTZ", direction)
+
+    def send_pitch_speed(self, direction, speed_rad_s):
+        """
+        按固定速度控制云台俯仰。
+
+        GSP 的协议字段为有符号 8 位整数，单位为度/秒；配置接口使用
+        rad/s，向下方向通过补码发送负速度。
+        """
+        try:
+            speed_rad_s = abs(float(speed_rad_s))
+            if not math.isfinite(speed_rad_s) or speed_rad_s <= 0:
+                return self.send_command("GSP", "00")
+
+            speed_deg_s = min(127, max(1, int(round(speed_rad_s * 180.0 / math.pi))))
+            if direction == "02":
+                speed_value = (-speed_deg_s) & 0xFF
+            elif direction == "01":
+                speed_value = speed_deg_s
+            else:
+                return self.send_command("GSP", "00")
+
+            return self.send_command("GSP", f"{speed_value:02X}")
+        except (TypeError, ValueError):
+            return self.send_command("GSP", "00")
+
+    def stop(self):
+        """停止云台运动并关闭 UDP socket。"""
+        try:
+            self.send_pitch_speed("00", 0)
+        finally:
+            self.client_socket.close()
 
 
 class HardwareController:
@@ -34,6 +119,51 @@ class HardwareController:
             "m5": False
         }
 
+    @staticmethod
+    def _xor_checksum(data):
+        """计算协议定义的 XOR 校验值。"""
+        checksum = 0
+        for byte in data:
+            checksum ^= byte
+        return checksum
+
+    @classmethod
+    def _build_frame(cls, command, payload=b""):
+        """构造带帧头、XOR 校验和帧尾的协议帧。"""
+        body = bytes((command,)) + payload
+        checksum = cls._xor_checksum(body)
+        return FRAME_HEADER + body + bytes((checksum,)) + FRAME_FOOTER
+
+    @classmethod
+    def _parse_frame(cls, frame):
+        """
+        解析一个下位机协议帧。
+
+        返回 (command, payload)，帧格式错误时返回 None。
+        CMD_THRUST_ACK 是协议中唯一不带 XOR 校验的应答帧。
+        """
+        if len(frame) < 6:
+            return None
+        if not frame.startswith(FRAME_HEADER) or not frame.endswith(FRAME_FOOTER):
+            return None
+
+        command = frame[2]
+        if command == CMD_THRUST_ACK:
+            if len(frame) != 6:
+                return None
+            return command, frame[3:4]
+
+        expected_lengths = {
+            CMD_DEPTH_TEMP: 14,
+        }
+        if len(frame) != expected_lengths.get(command, -1):
+            return None
+
+        # frame[2:-3] 覆盖命令字和全部数据，不包含校验字节及帧尾。
+        if frame[-3] != cls._xor_checksum(frame[2:-3]):
+            return None
+        return command, frame[3:-3]
+
     def setup_socket(self, local_port):
         """设置UDP套接字"""
         self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -60,20 +190,21 @@ class HardwareController:
             return False
 
         try:
-            data = {
-                "cmd": "thrust_init",
-                "motor": self.motor_params[motor_name]['num'],
-                "np_mid": self.motor_params[motor_name]['np_mid'],
-                "np_ini": self.motor_params[motor_name]['np_ini'],
-                "pp_ini": self.motor_params[motor_name]['pp_ini'],
-                "pp_mid": self.motor_params[motor_name]['pp_mid'],
-                "nt_end": self.motor_params[motor_name]['nt_end'],
-                "nt_mid": self.motor_params[motor_name]['nt_mid'],
-                "pt_mid": self.motor_params[motor_name]['pt_mid'],
-                "pt_end": self.motor_params[motor_name]['pt_end']
-            }
-            json_str = json.dumps(data) + "\n"
-            self.client_socket.sendto(json_str.encode(), self.server_address)
+            params = self.motor_params[motor_name]
+            payload = struct.pack(
+                '<B8f',
+                int(params['num']),
+                float(params['np_mid']),
+                float(params['np_ini']),
+                float(params['pp_ini']),
+                float(params['pp_mid']),
+                float(params['nt_end']),
+                float(params['nt_mid']),
+                float(params['pt_mid']),
+                float(params['pt_end']),
+            )
+            frame = self._build_frame(CMD_THRUST_CONFIG, payload)
+            self.client_socket.sendto(frame, self.server_address)
             # 更新电机初始化状态为成功
             self.motor_init_status[motor_name] = True
             return True
@@ -184,11 +315,19 @@ class HardwareController:
 
     def send_controller_data(self, controller_data):
         """
-        发送控制器数据到ROV
-        
+        发送控制器数据到ROV（二进制帧格式）
+
+        帧格式:
+            帧头: 0xFA 0xAF (2 bytes)
+            命令: 0x01 (1 byte)
+            数据: x, y, z, roll, pitch, yaw, servo0 (7 个小端 float)
+            校验: 从命令字到 servo0 末尾的 XOR (1 byte)
+            帧尾: 0xFB 0xBF (2 bytes)
+            总计: 34 bytes
+
         参数:
             controller_data: 控制器数据字典
-            
+
         返回:
             bool: 是否发送成功
         """
@@ -197,8 +336,17 @@ class HardwareController:
             return False
 
         try:
-            msg = json.dumps(controller_data)
-            self.client_socket.sendto((msg + '\n').encode(), self.server_address)
+            x = float(controller_data.get("y", 0.0))
+            y = float(controller_data.get("x", 0.0))
+            z = float(controller_data.get("z", 0.0))
+            roll = float(controller_data.get("roll", controller_data.get("rx", 0.0)))
+            pitch = float(controller_data.get("pitch", controller_data.get("ry", 0.0)))
+            yaw = -float(controller_data.get("yaw", controller_data.get("rz", 0.0)))
+            servo = float(controller_data.get("servo0", 0.0))
+
+            payload = struct.pack('<7f', x, y, z, roll, pitch, yaw, servo)
+            frame = self._build_frame(CMD_MOTION_CTRL, payload)
+            self.client_socket.sendto(frame, self.server_address)
             return True
         except Exception as e:
             print(f"发送控制器数据失败: {str(e)}")
@@ -217,34 +365,22 @@ class HardwareController:
 
         try:
             data, addr = self.client_socket.recvfrom(1024)
-            if data:
-                try:
-                    decoded_data = data.decode()
-                    stripped_data = decoded_data.strip()
-                    try:
-                        sensor_data = json.loads(stripped_data)
-                        return sensor_data
-                    except json.JSONDecodeError as e:
-                        # 记录JSON解析错误但不中断程序
-                        # 限制错误消息频率，避免日志被刷屏
-                        current_time = time.time()
-                        if not hasattr(self,
-                                       '_last_json_error_time') or current_time - self._last_json_error_time > 5.0:
-                            print(f"JSON解析错误: {str(e)}, 数据: {stripped_data[:50]}...")
-                            self._last_json_error_time = current_time
+            parsed = self._parse_frame(data)
+            if parsed is None:
+                return None
 
-                        # 返回一个最小的有效数据结构，避免调用者需要处理None
-                        return {"depth": 0.0, "temperature": 0.0, "_error": "json_decode"}
-                except UnicodeDecodeError as e:
-                    # 处理解码错误，同样限制错误消息频率
-                    current_time = time.time()
-                    if not hasattr(self,
-                                   '_last_decode_error_time') or current_time - self._last_decode_error_time > 5.0:
-                        print(f"数据解码错误: {str(e)}")
-                        self._last_decode_error_time = current_time
+            command, payload = parsed
+            if command == CMD_DEPTH_TEMP:
+                depth, temperature = struct.unpack('<2f', payload)
+                return {"depth": depth, "temperature": temperature}
 
-                    # 返回最小有效数据结构
-                    return {"depth": 0.0, "temperature": 0.0, "_error": "unicode_decode"}
+            if command == CMD_THRUST_ACK:
+                motor_num = payload[0]
+                motor_name = f"m{motor_num}"
+                if motor_name in self.motor_init_status:
+                    self.motor_init_status[motor_name] = True
+                # 应答不是传感器数据，不能交给 ControllerMonitor 处理。
+                return None
         except BlockingIOError:
             # 非阻塞模式下没有数据可读，这是正常的
             pass
@@ -360,7 +496,7 @@ class NetworkWorker(threading.Thread):
                         print("电调连接已恢复")
                         self.connection_status = True
 
-                # 接收传感器数据 - JSON错误在receive_sensor_data内部处理
+                # 接收并解析深度/温度协议帧；电机应答由控制器内部消费
                 sensor_data = self.hardware_controller.receive_sensor_data()
                 if sensor_data:
                     self.controller_monitor.update_sensor_data(sensor_data)
@@ -393,8 +529,9 @@ class NetworkWorker(threading.Thread):
 
         for attempt in range(retries + 1):
             try:
-                send_func(data)
-                return True
+                if send_func(data):
+                    return True
+                raise RuntimeError("发送函数返回失败")
             except Exception as e:
                 if attempt < retries:
                     # 指数退避重试
@@ -406,16 +543,8 @@ class NetworkWorker(threading.Thread):
                     return False
 
     def send_heartbeat(self):
-        """发送心跳包以保持连接"""
-        try:
-            # 创建一个简单的心跳包
-            heartbeat_data = {"cmd": "heartbeat", "timestamp": time.time()}
-            self.hardware_controller.client_socket.sendto(
-                (json.dumps(heartbeat_data) + '\n').encode(),
-                self.hardware_controller.server_address
-            )
-        except Exception as e:
-            print(f"发送心跳包失败: {str(e)}")
+        """新协议未定义心跳命令，保留接口但不发送未定义帧。"""
+        return False
 
     def reinitialize_motors(self):
         """
