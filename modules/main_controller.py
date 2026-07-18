@@ -57,7 +57,8 @@ class MainController:
         rtsp_url = self.config_manager.get_rtsp_url()
         base_width, base_height = self.config_manager.get_camera_dimensions()
         buffer_size = self.config_manager.config["camera"].getint("buffer")
-        self.video_thread = VideoThread(rtsp_url, base_width, base_height, buffer_size)
+        video_backend = self.config_manager.get_video_backend()
+        self.video_thread = VideoThread(rtsp_url, base_width, base_height, buffer_size, backend=video_backend)
         self.video_thread.start()
 
         # 初始化手柄控制器

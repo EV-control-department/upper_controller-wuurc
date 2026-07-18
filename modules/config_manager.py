@@ -79,6 +79,10 @@ class ConfigManager:
         """获取摄像头分辨率"""
         return self.config["camera"].getint("width"), self.config["camera"].getint("height")
 
+    def get_video_backend(self):
+        """获取视频拉流后端 (ffmpeg / gstreamer)"""
+        return self.config["camera"].get("backend", "ffmpeg").strip().lower()
+
     def get_server_address(self):
         """获取服务器地址"""
         host = self.config["serial"].get("host")

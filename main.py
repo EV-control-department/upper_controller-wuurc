@@ -67,7 +67,8 @@ class MainController:
         rtsp_url = self.config_manager.get_rtsp_url()
         base_width, base_height = self.config_manager.get_camera_dimensions()
         buffer_size = self.config_manager.config["camera"].getint("buffer")
-        self.video_thread = VideoThread(rtsp_url, base_width, base_height, buffer_size)
+        video_backend = self.config_manager.get_video_backend()
+        self.video_thread = VideoThread(rtsp_url, base_width, base_height, buffer_size, backend=video_backend)
         self.video_thread.start()
 
         # 视频线程监控变量
@@ -175,7 +176,8 @@ class MainController:
                         rtsp_url = self.config_manager.get_rtsp_url()
                         base_width, base_height = self.config_manager.get_camera_dimensions()
                         buffer_size = self.config_manager.config["camera"].getint("buffer")
-                        self.video_thread = VideoThread(rtsp_url, base_width, base_height, buffer_size)
+                        video_backend = self.config_manager.get_video_backend()
+                        self.video_thread = VideoThread(rtsp_url, base_width, base_height, buffer_size, backend=video_backend)
                         self.video_thread.start()
                         print("[DEBUG] 已重启视频线程（初始化阶段）")
                     except Exception as e:
@@ -624,7 +626,8 @@ class MainController:
                         print(f"停止旧视频线程时出错: {str(e)}")
 
                     # 创建并启动新线程
-                    self.video_thread = VideoThread(rtsp_url, base_width, base_height, buffer_size)
+                    video_backend = self.config_manager.get_video_backend()
+                    self.video_thread = VideoThread(rtsp_url, base_width, base_height, buffer_size, backend=video_backend)
                     self.video_thread.start()
                     print("视频线程已重新启动")
 

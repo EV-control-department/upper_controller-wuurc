@@ -20,7 +20,7 @@ if not hasattr(subprocess, 'CREATE_NO_WINDOW'):
 class VideoThread(threading.Thread):
     """视频处理线程，处理视频流和图像处理"""
 
-    def __init__(self, rtsp_url, base_width, base_height, buffer_size=5, output_folder="captures"):
+    def __init__(self, rtsp_url, base_width, base_height, buffer_size=5, output_folder="captures", backend="ffmpeg"):
         """
         初始化视频处理线程
         
@@ -30,6 +30,7 @@ class VideoThread(threading.Thread):
             base_height: 视频高度
             buffer_size: 缓冲区大小
             output_folder: 截图保存文件夹
+            backend: 拉流后端 (ffmpeg / gstreamer)
         """
         super().__init__()
         self.rtsp_url = rtsp_url
@@ -37,6 +38,7 @@ class VideoThread(threading.Thread):
         self.base_height = base_height
         self.buffer_size = buffer_size
         self.output_folder = output_folder
+        self.backend = backend
         self.running = True
         self.frame_queue = []
         self.max_queue_size = 10  # 队列大小
@@ -44,42 +46,42 @@ class VideoThread(threading.Thread):
         self.lock = threading.Lock()  # 用于同步对队列的访问
         self.capture_count = 0  # 用于生成照片编号
         self.process = None
-        self.ffmpeg_log = []  # 存储FFmpeg日志
-        self.stderr_thread = None  # FFmpeg错误输出处理线程
+        self.proc_log = []  # 存储后端进程日志
+        self.stderr_thread = None  # 后端错误输出处理线程
 
         # 确保输出文件夹存在
         if not os.path.exists(self.output_folder):
             os.makedirs(self.output_folder)
 
-        # 初始化FFmpeg进程
-        self._init_ffmpeg_process()
+        # 初始化拉流进程
+        if self.backend == "gstreamer":
+            self._init_gst_process()
+        else:
+            self._init_ffmpeg_process()
+
+    # ─── FFmpeg 后端 ─────────────────────────────────
+
+    def _find_executable(self, name):
+        """查找可执行文件路径（优先打包目录）"""
+        if getattr(sys, 'frozen', False):
+            base_dir = os.path.dirname(sys.executable)
+            candidate = os.path.join(base_dir, '_internal', name + '.exe')
+            if os.path.exists(candidate):
+                return candidate
+        path = shutil.which(name)
+        if path:
+            return path
+        return name
 
     def _init_ffmpeg_process(self):
         """初始化FFmpeg进程"""
-        # 优先使用打包目录中的 ffmpeg.exe（Windows 冻结后）
-        ffmpeg_exe = 'ffmpeg'
-        try:
-            if getattr(sys, 'frozen', False):
-                # PyInstaller 下，主可执行文件位于 dist/ROV_Controller，内部资源在 _internal
-                base_dir = os.path.dirname(sys.executable)
-                candidate = os.path.join(base_dir, '_internal', 'ffmpeg.exe')
-                if os.path.exists(candidate):
-                    ffmpeg_exe = candidate
-            else:
-                # 开发环境使用 PATH 中的 ffmpeg
-                path_ffmpeg = shutil.which('ffmpeg')
-                if path_ffmpeg:
-                    ffmpeg_exe = path_ffmpeg
-        except Exception:
-            pass
+        ffmpeg_exe = self._find_executable('ffmpeg')
 
         command = [
             ffmpeg_exe,
             '-rtsp_transport', 'tcp',  # 强制使用TCP传输
             '-fflags', 'nobuffer',  # 禁用缓冲区
             '-flags', 'low_delay',  # 低延迟标志
-            '-hwaccel', 'cuda',  # 启用CUDA硬件加速（若环境不支持，FFmpeg将自行回退）
-            '-hwaccel_device', '0',  # 指定使用的CUDA设备
             '-i', self.rtsp_url,  # 输入URL
             '-f', 'image2pipe',
             '-pix_fmt', 'bgr24',
@@ -87,50 +89,74 @@ class VideoThread(threading.Thread):
             '-an', '-sn',  # 禁用音频和字幕
             '-probesize', '32',  # 减少探测大小
             '-analyzeduration', '0',  # 立即开始解码
-            '-tune', 'zerolatency',  # 零延迟调整
-            '-preset', 'ultrafast',  # 使用最快的编码预设
-            '-threads', '1',  # 使用单线程减少上下文切换
             '-'
         ]
 
         self.process = subprocess.Popen(command,
                                         stdout=subprocess.PIPE,
-                                        stderr=subprocess.PIPE,  # 重定向stderr，防止FFmpeg打开单独的窗口
+                                        stderr=subprocess.PIPE,
                                         bufsize=self.base_width * self.base_height * 3 * self.buffer_size,
-                                        creationflags=subprocess.CREATE_NO_WINDOW)  # 防止创建新窗口
+                                        creationflags=subprocess.CREATE_NO_WINDOW)
 
-        # 启动stderr读取线程
+        self._start_stderr_thread()
+
+    # ─── GStreamer 后端 ──────────────────────────────
+
+    def _init_gst_process(self):
+        """初始化GStreamer进程"""
+        gst_exe = self._find_executable('gst-launch-1.0')
+
+        command = [
+            gst_exe,
+            '-e',  # 优雅退出
+            'rtspsrc', f'location={self.rtsp_url}',
+            'latency=0',
+            '!', 'rtph264depay',
+            '!', 'avdec_h264',
+            '!', 'videoconvert',
+            '!', 'video/x-raw,format=BGR',
+            '!', 'fdsink', 'fd=1',  # 输出到 stdout
+        ]
+
+        self.process = subprocess.Popen(command,
+                                        stdout=subprocess.PIPE,
+                                        stderr=subprocess.PIPE,
+                                        bufsize=self.base_width * self.base_height * 3 * self.buffer_size)
+
+        self._start_stderr_thread()
+
+    # ─── 通用 ────────────────────────────────────────
+
+    def _start_stderr_thread(self):
+        """启动stderr读取线程"""
         self.stderr_thread = threading.Thread(target=self._read_stderr)
-        self.stderr_thread.daemon = True  # 设置为守护线程，主线程结束时自动结束
+        self.stderr_thread.daemon = True
         self.stderr_thread.start()
 
     def _read_stderr(self):
-        """读取FFmpeg的stderr输出并存储到日志中"""
+        """读取后端进程的stderr输出并打印"""
+        tag = self.backend.upper()
         while self.running and self.process:
             try:
                 line = self.process.stderr.readline()
                 if not line:
                     break
-
-                # 解码并存储日志
                 line_text = line.decode('utf-8', errors='replace').strip()
                 if line_text:
-                    print(f"FFmpeg: {line_text}")  # 在控制台输出FFmpeg日志
-
-                    # 限制日志大小，防止内存泄漏
+                    print(f"{tag}: {line_text}")
                     with self.lock:
-                        self.ffmpeg_log.append(line_text)
-                        if len(self.ffmpeg_log) > 100:  # 只保留最近的100条日志
-                            self.ffmpeg_log = self.ffmpeg_log[-100:]
+                        self.proc_log.append(line_text)
+                        if len(self.proc_log) > 100:
+                            self.proc_log = self.proc_log[-100:]
             except Exception as e:
-                print(f"读取FFmpeg日志时出错: {e}")
+                print(f"读取{tag}日志时出错: {e}")
                 break
 
     def run(self):
         """线程主循环"""
-        # 检查进程是否已初始化
+        tag = self.backend.upper()
         if not hasattr(self, 'process') or self.process is None:
-            print("FFmpeg进程未初始化")
+            print(f"{tag}进程未初始化")
             return
 
         frame_size = self.base_width * self.base_height * 3
@@ -141,17 +167,16 @@ class VideoThread(threading.Thread):
                     frame = np.frombuffer(raw_frame, np.uint8).reshape((self.base_height, self.base_width, 3))
                     frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-                    # 保持队列较小
-                    with self.lock:  # 使用锁来确保线程安全
+                    with self.lock:
                         while len(self.frame_queue) >= self.max_queue_size:
                             self.frame_queue.pop(0)
                         self.frame_queue.append(frame_rgb)
 
-                    self.video_connected = True  # 成功接收到视频流
+                    self.video_connected = True
 
             except Exception as e:
-                print(f"视频读取错误: {e}")
-                self.video_connected = False  # 断开视频流
+                print(f"视频读取错误 ({tag}): {e}")
+                self.video_connected = False
 
     def stop(self):
         """设置线程停止标志"""
