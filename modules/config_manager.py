@@ -90,22 +90,79 @@ class ConfigManager:
         return (host, port)
 
     def get_gimbal_address(self):
-        """获取云台 TOP Protocol 地址，未配置时使用云台默认地址。"""
-        if self.config.has_section("gimbal"):
-            host = self.config["gimbal"].get("host", "192.168.0.38")
-            port = self.config["gimbal"].getint("remote_port", fallback=5000)
-            return (host, port)
-        return ("192.168.0.38", 5000)
+        """获取当前云台预设的网络地址。"""
+        model = self.get_gimbal_model()
+        profile_name = "gimbal_a2_mini" if model == "a2_mini" else "gimbal_yunzhuo"
+        defaults = {
+            "gimbal_yunzhuo": ("192.168.0.38", 5000),
+            "gimbal_a2_mini": ("192.168.144.25", 37260),
+        }
+        if self.config.has_section(profile_name):
+            section = self.config[profile_name]
+            return (
+                section.get("host", defaults[profile_name][0]),
+                section.getint("remote_port", fallback=defaults[profile_name][1]),
+            )
 
-    def get_gimbal_speeds(self):
-        """获取方向键对应的云台俯仰速度，单位为 rad/s。"""
+        # 兼容旧配置：网络参数曾经直接放在 [gimbal] 中。
         if self.config.has_section("gimbal"):
             section = self.config["gimbal"]
+            return (
+                section.get("host", defaults[profile_name][0]),
+                section.getint("remote_port", fallback=defaults[profile_name][1]),
+            )
+        return defaults[profile_name]
+
+    def get_gimbal_model(self):
+        """获取云台协议预设：yunzhuo 或 a2_mini。"""
+        if not self.config.has_section("gimbal"):
+            return "yunzhuo"
+        model = self.config["gimbal"].get("model", "YUNZHUO").strip().lower()
+        aliases = {
+            "c10": "yunzhuo", "c10pro": "yunzhuo", "yunzhuo": "yunzhuo", "云卓": "yunzhuo",
+            "a2": "a2_mini", "a2mini": "a2_mini", "a2_mini": "a2_mini",
+        }
+        return aliases.get(model, "yunzhuo")
+
+    def get_gimbal_hat_settings(self):
+        """获取方向键控制模式及点按模式的目标角度。"""
+        if not self.config.has_section("gimbal"):
             return {
-                "up": section.getfloat("up_speed_rad_s", fallback=0.35),
-                "down": section.getfloat("down_speed_rad_s", fallback=0.35),
+                "mode": "speed",
+                "up_angle_deg": 25.0,
+                "down_angle_deg": -90.0,
+                "angle_speed_rad_s": 0.35,
             }
-        return {"up": 0.35, "down": 0.35}
+        section = self.config["gimbal"]
+        mode = section.get("hat_control_mode", "speed").strip().lower()
+        mode = "angle" if mode in ("angle", "position", "点按") else "speed"
+        return {
+            "mode": mode,
+            "up_angle_deg": section.getfloat("hat_up_angle_deg", fallback=25.0),
+            "down_angle_deg": section.getfloat("hat_down_angle_deg", fallback=-90.0),
+            "angle_speed_rad_s": section.getfloat("angle_speed_rad_s", fallback=0.35),
+        }
+
+    def get_gimbal_speeds(self):
+        """获取方向键速度；云卓为 rad/s，A2 mini 为 1~100 的速度等级。"""
+        model = self.get_gimbal_model()
+        profile_name = "gimbal_a2_mini" if model == "a2_mini" else "gimbal_yunzhuo"
+        if self.config.has_section(profile_name):
+            section = self.config[profile_name]
+        elif self.config.has_section("gimbal"):
+            section = self.config["gimbal"]
+        else:
+            return {"up": 50.0 if model == "a2_mini" else 0.35,
+                    "down": 50.0 if model == "a2_mini" else 0.35}
+        if model == "a2_mini":
+            return {
+                "up": section.getfloat("up_speed", fallback=50.0),
+                "down": section.getfloat("down_speed", fallback=50.0),
+            }
+        return {
+            "up": section.getfloat("up_speed_rad_s", fallback=0.35),
+            "down": section.getfloat("down_speed_rad_s", fallback=0.35),
+        }
 
     def get_local_port(self):
         """获取本地端口"""

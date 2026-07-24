@@ -21,12 +21,19 @@ CMD_THRUST_ACK = 0x04
 
 
 class GimbalController:
-    """云台 TOP Protocol UDP 控制器。"""
+    """云台 UDP 控制器，支持云卓 TOP 和 SIYI A2 mini 协议。"""
 
-    def __init__(self, server_address=("192.168.0.38", 5000)):
+    def __init__(self, server_address=("192.168.0.38", 5000), model="yunzhuo"):
         self.server_address = server_address
+        self.model = self._normalize_model(model)
+        self._sequence = 0
         self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.client_socket.setblocking(False)
+
+    @staticmethod
+    def _normalize_model(model):
+        model = str(model).strip().lower()
+        return "a2_mini" if model in ("a2", "a2mini", "a2_mini") else "yunzhuo"
 
     @staticmethod
     def calculate_crc(payload):
@@ -51,6 +58,35 @@ class GimbalController:
             print(f"发送云台指令失败: {exc}")
             return False
 
+    @staticmethod
+    def calculate_siyi_crc(payload):
+        """计算 SIYI SDK 使用的 CRC16-CCITT（初值 0，低字节在前）。"""
+        crc = 0
+        for byte in payload:
+            crc ^= byte << 8
+            for _ in range(8):
+                crc = ((crc << 1) ^ 0x1021) & 0xFFFF if crc & 0x8000 else (crc << 1) & 0xFFFF
+        return crc
+
+    def build_siyi_packet(self, command_id, data=b"", ctrl=0x01):
+        """构造 A2 mini/SIYI SDK 二进制帧。"""
+        if not isinstance(data, (bytes, bytearray)):
+            data = bytes(data)
+        sequence = self._sequence
+        self._sequence = (self._sequence + 1) & 0xFFFF
+        packet = struct.pack("<2sBHHB", b"\x55\x66", ctrl, len(data), sequence, command_id) + data
+        return packet + struct.pack("<H", self.calculate_siyi_crc(packet))
+
+    def send_siyi_command(self, command_id, data=b""):
+        """发送一个 SIYI SDK 命令。"""
+        try:
+            packet = self.build_siyi_packet(command_id, data)
+            self.client_socket.sendto(packet, self.server_address)
+            return True
+        except (OSError, ValueError, struct.error) as exc:
+            print(f"发送 A2 mini 云台指令失败: {exc}")
+            return False
+
     def send_ptz(self, direction):
         """
         发送云台 PTZ 指令。
@@ -66,25 +102,52 @@ class GimbalController:
         """
         按固定速度控制云台俯仰。
 
-        GSP 的协议字段为有符号 8 位整数，单位为度/秒；配置接口使用
-        rad/s，向下方向通过补码发送负速度。
+        云卓 GSP 的字段单位为 0.5 度/秒，配置接口使用 rad/s。
+        A2 mini 的 0x07 命令字段为 -100~100 的速度等级。
         """
         try:
-            speed_rad_s = abs(float(speed_rad_s))
-            if not math.isfinite(speed_rad_s) or speed_rad_s <= 0:
-                return self.send_command("GSP", "00")
+            speed = abs(float(speed_rad_s))
+            if not math.isfinite(speed):
+                speed = 0.0
+            if self.model == "a2_mini":
+                speed_value = min(100, max(0, int(round(speed))))
+                if direction == "02":
+                    speed_value = -speed_value
+                elif direction != "01":
+                    speed_value = 0
+                return self.send_siyi_command(0x07, struct.pack("<bb", 0, speed_value))
 
-            speed_deg_s = min(127, max(1, int(round(speed_rad_s * 180.0 / math.pi))))
+            speed_units = min(127, max(0, int(round(speed * 180.0 / math.pi / 0.5))))
             if direction == "02":
-                speed_value = (-speed_deg_s) & 0xFF
+                speed_value = (-speed_units) & 0xFF
             elif direction == "01":
-                speed_value = speed_deg_s
+                speed_value = speed_units
             else:
-                return self.send_command("GSP", "00")
-
+                speed_value = 0
             return self.send_command("GSP", f"{speed_value:02X}")
         except (TypeError, ValueError):
+            if self.model == "a2_mini":
+                return self.send_siyi_command(0x07, b"\x00\x00")
             return self.send_command("GSP", "00")
+
+    def send_pitch_angle(self, angle_deg, speed_rad_s=0.35):
+        """将云台俯仰转到绝对角度。正值表示向上。"""
+        try:
+            angle_deg = float(angle_deg)
+            if not math.isfinite(angle_deg):
+                return False
+            if self.model == "a2_mini":
+                # A2 mini 的俯仰范围为 -90°~25°，角度单位为 0.1°。
+                angle_tenths = int(round(min(25.0, max(-90.0, angle_deg)) * 10))
+                return self.send_siyi_command(0x0E, struct.pack("<hh", 0, angle_tenths))
+
+            # 云卓 GAP 的角度字段按 0.01°编码，速度字段单位为 0.5°/s。
+            angle_value = int(round(min(90.0, max(-90.0, angle_deg)) * 100)) & 0xFFFF
+            speed = abs(float(speed_rad_s))
+            speed_units = min(127, max(0, int(round(speed * 180.0 / math.pi / 0.5))))
+            return self.send_command("GAP", f"{angle_value:04X}{speed_units:02X}")
+        except (TypeError, ValueError, struct.error):
+            return False
 
     def stop(self):
         """停止云台运动并关闭 UDP socket。"""

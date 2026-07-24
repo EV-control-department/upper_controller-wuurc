@@ -43,7 +43,9 @@ class MainController:
         # 初始化硬件控制器
         server_address = self.config_manager.get_server_address()
         self.hw_controller = HardwareController(server_address, self.config_manager.motor_params)
-        self.gimbal_controller = GimbalController(self.config_manager.get_gimbal_address())
+        self.gimbal_controller = GimbalController(
+            self.config_manager.get_gimbal_address(), self.config_manager.get_gimbal_model()
+        )
 
         # 设置网络套接字
         self.client_socket = self.hw_controller.setup_socket(self.config_manager.get_local_port())

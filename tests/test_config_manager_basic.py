@@ -33,6 +33,15 @@ class TestConfigManagerBasic(unittest.TestCase):
         self.assertGreater(remote, 0)
         self.assertGreater(local, 0)
 
+    def test_gimbal_preset_and_hat_settings(self):
+        self.assertIn(self.cm.get_gimbal_model(), ("yunzhuo", "a2_mini"))
+        host, port = self.cm.get_gimbal_address()
+        self.assertIsInstance(host, str)
+        self.assertGreater(port, 0)
+        hat = self.cm.get_gimbal_hat_settings()
+        self.assertIn(hat["mode"], ("speed", "angle"))
+        self.assertIn("up", self.cm.get_gimbal_speeds())
+
     def test_keyboard_bindings_present(self):
         kb = self.cm.get_keyboard_bindings()
         required_keys = [

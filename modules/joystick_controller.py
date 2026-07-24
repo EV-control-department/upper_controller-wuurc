@@ -26,7 +26,8 @@ class JoystickController:
         self.controller_monitor = controller_monitor
         self.gimbal_controller = gimbal_controller
         self.gimbal_speeds = self.config_manager.get_gimbal_speeds()
-        self._gimbal_direction = None
+        self.gimbal_hat_settings = self.config_manager.get_gimbal_hat_settings()
+        self._gimbal_direction = "00"
 
         # 模式设置
         self.speed_modes = self.config_manager.get_speed_modes()
@@ -241,6 +242,21 @@ class JoystickController:
             direction = "02"  # 方向键下：云台向下看
         else:
             direction = "00"  # 松开方向键：停止云台
+
+        if self.gimbal_hat_settings["mode"] == "angle":
+            # 点按模式只在方向键状态发生变化时发送一次绝对角度命令。
+            if direction != "00" and direction != self._gimbal_direction:
+                angle = (
+                    self.gimbal_hat_settings["up_angle_deg"]
+                    if direction == "01"
+                    else self.gimbal_hat_settings["down_angle_deg"]
+                )
+                if self.gimbal_controller.send_pitch_angle(
+                        angle, self.gimbal_hat_settings["angle_speed_rad_s"]):
+                    self._gimbal_direction = direction
+            elif direction == "00":
+                self._gimbal_direction = "00"
+            return
 
         if direction == "01":
             speed_rad_s = self.gimbal_speeds["up"]

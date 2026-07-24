@@ -190,6 +190,12 @@ upper_controller-wuurc/
 - [joystick] 手柄
     - buttons, axes, long, double, tick 等基础参数
 
+- [gimbal] 云台协议与方向键控制
+    - `model = YUNZHUO` 使用云卓 C10/C10Pro TOP 协议；改为 `A2_MINI` 使用 SIYI A2 mini 协议。
+    - `hat_control_mode = speed`：方向键长按按设定速度转动；改为 `angle`：点按转到 `hat_up_angle_deg` / `hat_down_angle_deg`。
+    - `[gimbal_yunzhuo]` 的 `up_speed_rad_s` / `down_speed_rad_s` 使用 rad/s。
+    - `[gimbal_a2_mini]` 的 `up_speed` / `down_speed` 使用 A2 协议速度等级 1–100，默认地址为 `192.168.144.25:37260`。
+
 - [keyboard_bindings] 键盘快捷键
     - quit_key, xbox_debugger_key, toggle_rotation_key, toggle_undistorted_key, toggle_fullscreen_key,
       capture_frame_key, controller_visualizer_key(默认 v), controller_mapping_key(默认 m),
